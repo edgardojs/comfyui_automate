@@ -1,3 +1,5 @@
+"""Pydantic models for prompt generation requests and responses."""
+
 from pydantic import BaseModel, Field
 
 

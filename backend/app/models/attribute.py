@@ -1,4 +1,8 @@
-from pydantic import BaseModel, Field
+"""Pydantic models for the attribute library."""
+
+import re
+
+from pydantic import BaseModel, Field, field_validator
 
 
 class Attribute(BaseModel):
@@ -9,15 +13,21 @@ class Attribute(BaseModel):
     assembling a prompt.
     """
 
-    id: str = Field(..., description="Unique identifier for the attribute, e.g. 'rogue'")
+    id: str = Field(
+        ..., min_length=1, max_length=255,
+        description="Unique identifier for the attribute, e.g. 'rogue'"
+    )
     category: str = Field(
-        ..., description="Category this attribute belongs to, e.g. 'classes'"
+        ..., min_length=1, max_length=100,
+        description="Category this attribute belongs to, e.g. 'classes'"
     )
     label: str = Field(
-        ..., description="Human-readable label, e.g. 'Rogue'"
+        ..., min_length=1, max_length=255,
+        description="Human-readable label, e.g. 'Rogue'"
     )
     prompt_terms: list[str] = Field(
         ...,
+        min_length=1,
         description="List of prompt-friendly terms. One is randomly selected during generation.",
     )
     compatible_with: list[str] = Field(
@@ -28,6 +38,18 @@ class Attribute(BaseModel):
         default_factory=list,
         description="Descriptive tags for filtering and grouping, e.g. ['fantasy', 'agile']",
     )
+
+    @field_validator("id", "category", "label")
+    @classmethod
+    def reject_whitespace_only(cls, v: str) -> str:
+        """Reject strings that are empty, whitespace-only, or containing null bytes/HTML."""
+        if "\x00" in v:
+            raise ValueError("Field must not contain null bytes")
+        if re.search(r"<[^>]+>", v):
+            raise ValueError("Field must not contain HTML tags")
+        if not v.strip():
+            raise ValueError("Field must not be empty or whitespace-only")
+        return v
 
 
 class AttributeCategory(BaseModel):

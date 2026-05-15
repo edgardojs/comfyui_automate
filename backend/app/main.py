@@ -1,11 +1,13 @@
-import os
+"""FastAPI application entry point for the ComfyUI Sprite Character Prompt Generator."""
 
+import os
 from contextlib import asynccontextmanager
+from typing import AsyncGenerator
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.app.db.database import init_db
+from app.db.database import init_db
 
 # CORS origins — configurable via CORS_ORIGINS env var (comma-separated)
 # Defaults to common local dev servers
@@ -15,7 +17,7 @@ CORS_ORIGINS = os.environ.get(
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     """Initialize database tables on startup."""
     await init_db()
     yield

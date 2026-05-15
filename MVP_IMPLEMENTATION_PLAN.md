@@ -6,7 +6,7 @@ This plan follows the SRS's recommended MVP priority (Section 24), focusing on *
 
 ---
 
-## Milestone 1: Project Scaffolding & Data Layer
+## Milestone 1: Project Scaffolding & Data Layer ✅ COMPLETE
 
 **Goal:** Set up the project structure, define the data schemas, and create the attribute/template JSON files.
 
@@ -54,16 +54,16 @@ This plan follows the SRS's recommended MVP priority (Section 24), focusing on *
   - `character_isolation_cleanup`
 
 #### 1.3 Initialize Frontend (React + Tailwind)
-- [ ] Scaffold React app with Vite in `frontend/`
-- [ ] Install and configure Tailwind CSS
-- [ ] Create basic `App.jsx` with layout shell
-- [ ] Create `frontend/src/api/` directory for API client functions
-- [ ] Create `frontend/src/components/` directory structure
-- [ ] Create `frontend/src/pages/` directory structure
+- [x] Scaffold React app with Vite in `frontend/`
+- [x] Install and configure Tailwind CSS
+- [x] Create basic `App.jsx` with layout shell
+- [x] Create `frontend/src/api/` directory for API client functions
+- [x] Create `frontend/src/components/` directory structure
+- [x] Create `frontend/src/pages/` directory structure
 
 ---
 
-## Milestone 2: Prompt Generation Engine
+## Milestone 2: Prompt Generation Engine ✅ COMPLETE
 
 **Goal:** Build the core prompt generation logic that takes attributes and produces structured positive and negative prompts. This is the heart of the application.
 
@@ -75,41 +75,41 @@ This plan follows the SRS's recommended MVP priority (Section 24), focusing on *
 ### Tasks
 
 #### 2.1 Build the Randomizer (`backend/app/core/randomizer.py`)
-- [ ] Implement `select_random_attribute(category, locked_value=None)` — Picks a random attribute from a category, respecting locked values
-- [ ] Implement `generate_variation_count(n)` — Returns `n` distinct variations by randomizing unlocked fields
-- [ ] Implement `fill_unselected_attributes(partial_attributes)` — Fills in any missing attributes with random defaults
-- [ ] Implement `resolve_prompt_terms(attribute)` — Maps an attribute to its prompt-friendly terms (picks randomly from `prompt_terms` array)
-- [ ] Implement seed-based randomization for reproducibility (optional for MVP, but nice to have)
+- [x] Implement `select_random_attribute(category, locked_value=None)` — Picks a random attribute from a category, respecting locked values
+- [x] Implement `generate_variation_count(n)` — Returns `n` distinct variations by randomizing unlocked fields
+- [x] Implement `fill_unselected_attributes(partial_attributes)` — Fills in any missing attributes with random defaults
+- [x] Implement `resolve_prompt_terms(attribute)` — Maps an attribute to its prompt-friendly terms (picks randomly from `prompt_terms` array)
+- [x] Implement seed-based randomization for reproducibility (optional for MVP, but nice to have)
 
 #### 2.2 Build the Prompt Engine (`backend/app/core/prompt_engine.py`)
-- [ ] Implement `generate_positive_prompt(attributes, template_id)`:
+- [x] Implement `generate_positive_prompt(attributes, template_id)`:
   1. Resolve all attributes to prompt terms
   2. Select the appropriate template
   3. Fill template placeholders with resolved terms
   4. Apply prompt ordering rules per SRS Section 16.1
   5. Return structured positive prompt string
-- [ ] Implement `generate_negative_prompt(profile_id, enabled_categories)`:
+- [x] Implement `generate_negative_prompt(profile_id, enabled_categories)`:
   1. Load the selected negative profile
   2. Filter by enabled categories
   3. Assemble comma-separated negative prompt
   4. Return structured negative prompt string
-- [ ] Implement `generate_prompt_pair(attributes, template_id, negative_profile_id, locked_fields)`:
+- [x] Implement `generate_prompt_pair(attributes, template_id, negative_profile_id, locked_fields)`:
   1. Fill unselected attributes
   2. Generate positive prompt
   3. Generate negative prompt
   4. Return `PromptPair` object
-- [ ] Implement `generate_variations(attributes, variation_count, locked_fields, template_id, negative_profile_id)`:
+- [x] Implement `generate_variations(attributes, variation_count, locked_fields, template_id, negative_profile_id)`:
   1. For each variation, randomize unlocked fields
   2. Generate a `PromptPair` for each
   3. Return list of `PromptPair` objects
 
 #### 2.3 Write Unit Tests
-- [ ] Test positive prompt generation with known attributes
-- [ ] Test negative prompt generation with each profile
-- [ ] Test variation generation produces distinct outputs
-- [ ] Test attribute locking preserves locked values
-- [ ] Test template selection and placeholder filling
-- [ ] Test edge cases: empty attributes, all locked, single variation
+- [x] Test positive prompt generation with known attributes
+- [x] Test negative prompt generation with each profile
+- [x] Test variation generation produces distinct outputs
+- [x] Test attribute locking preserves locked values
+- [x] Test template selection and placeholder filling
+- [x] Test edge cases: empty attributes, all locked, single variation
 
 ---
 

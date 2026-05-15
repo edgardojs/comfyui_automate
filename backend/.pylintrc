@@ -1,0 +1,4 @@
+[MAIN]
+# SQLAlchemy models are data containers by design — too-few-public-methods is expected
+disable=
+    too-few-public-methods

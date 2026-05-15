@@ -1,7 +1,9 @@
+"""Pydantic models for preset creation and management."""
+
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 def _generate_preset_id() -> str:
@@ -48,7 +50,9 @@ class Preset(BaseModel):
 class PresetCreate(BaseModel):
     """Request body for creating a new preset."""
 
-    name: str = Field(..., min_length=1, description="Name for the preset")
+    model_config = {"extra": "forbid"}
+
+    name: str = Field(..., min_length=1, max_length=255, description="Name for the preset")
     attributes: dict[str, str | None] = Field(
         default_factory=dict, description="Selected attributes keyed by category"
     )
@@ -64,6 +68,14 @@ class PresetCreate(BaseModel):
         default="general_sprite_cleanup",
         description="ID of the negative prompt profile",
     )
+
+    @field_validator("name")
+    @classmethod
+    def reject_whitespace_only(cls, v: str) -> str:
+        """Reject names that are empty or whitespace-only after stripping."""
+        if not v.strip():
+            raise ValueError("Name must not be empty or whitespace-only")
+        return v.strip()
 
 
 class PresetUpdate(BaseModel):
