@@ -1,0 +1,734 @@
+{
+  "categories": [
+    {
+      "id": "classes",
+      "label": "Character Class",
+      "attributes": [
+        {
+          "id": "rogue",
+          "category": "classes",
+          "label": "Rogue",
+          "prompt_terms": ["rogue", "stealthy adventurer", "hooded scout", "shadow rogue"],
+          "compatible_with": ["dagger", "short_sword", "bow", "leather_armor", "hooded_cloak"],
+          "tags": ["fantasy", "agile", "stealth"]
+        },
+        {
+          "id": "mage",
+          "category": "classes",
+          "label": "Mage",
+          "prompt_terms": ["mage", "arcane spellcaster", "wizard", "mystic sorcerer"],
+          "compatible_with": ["staff", "wand", "spellbook", "cloth_robes", "enchanted_robes"],
+          "tags": ["fantasy", "magic", "ranged"]
+        },
+        {
+          "id": "warrior",
+          "category": "classes",
+          "label": "Warrior",
+          "prompt_terms": ["warrior", "battle-hardened fighter", "armored knight", "swordmaster"],
+          "compatible_with": ["long_sword", "axe", "plate_armor", "chainmail"],
+          "tags": ["fantasy", "melee", "tank"]
+        },
+        {
+          "id": "archer",
+          "category": "classes",
+          "label": "Archer",
+          "prompt_terms": ["archer", "sharpshooting ranger", "bow hunter", "elven archer"],
+          "compatible_with": ["bow", "crossbow", "leather_armor", "hooded_cloak"],
+          "tags": ["fantasy", "ranged", "agile"]
+        },
+        {
+          "id": "necromancer",
+          "category": "classes",
+          "label": "Necromancer",
+          "prompt_terms": ["necromancer", "dark sorcerer", "undead commander", "death mage"],
+          "compatible_with": ["staff", "spellbook", "cloth_robes", "hooded_cloak"],
+          "tags": ["fantasy", "dark", "magic"]
+        },
+        {
+          "id": "paladin",
+          "category": "classes",
+          "label": "Paladin",
+          "prompt_terms": ["paladin", "holy knight", "divine warrior", "righteous crusader"],
+          "compatible_with": ["long_sword", "plate_armor", "chainmail", "enchanted_robes"],
+          "tags": ["fantasy", "holy", "melee"]
+        },
+        {
+          "id": "samurai",
+          "category": "classes",
+          "label": "Samurai",
+          "prompt_terms": ["samurai", "ronin warrior", "blade master", "honorable swordsman"],
+          "compatible_with": ["long_sword", "spear", "plate_armor", "traveling_clothes"],
+          "tags": ["fantasy", "melee", "disciplined"]
+        },
+        {
+          "id": "gunslinger",
+          "category": "classes",
+          "label": "Gunslinger",
+          "prompt_terms": ["gunslinger", "sharpshooter", "wild west outlaw", "pistol duelist"],
+          "compatible_with": ["crossbow", "leather_armor", "hooded_cloak", "traveling_clothes"],
+          "tags": ["fantasy", "ranged", "agile"]
+        },
+        {
+          "id": "alchemist",
+          "category": "classes",
+          "label": "Alchemist",
+          "prompt_terms": ["alchemist", "potion brewer", "mad scientist", "herbalist sage"],
+          "compatible_with": ["staff", "spellbook", "cloth_robes", "leather_armor"],
+          "tags": ["fantasy", "magic", "crafting"]
+        },
+        {
+          "id": "monk",
+          "category": "classes",
+          "label": "Monk",
+          "prompt_terms": ["monk", "martial artist", "disciplined ascetic", "fist fighter"],
+          "compatible_with": ["staff", "traveling_clothes", "cloth_robes"],
+          "tags": ["fantasy", "melee", "disciplined"]
+        },
+        {
+          "id": "druid",
+          "category": "classes",
+          "label": "Druid",
+          "prompt_terms": ["druid", "nature shapeshifter", "forest guardian", "beast caller"],
+          "compatible_with": ["staff", "enchanted_robes", "leather_armor", "hooded_cloak"],
+          "tags": ["fantasy", "nature", "magic"]
+        },
+        {
+          "id": "bard",
+          "category": "classes",
+          "label": "Bard",
+          "prompt_terms": ["bard", "wandering minstrel", "charismatic performer", "musical enchanters"],
+          "compatible_with": ["dagger", "short_sword", "cloth_robes", "leather_armor"],
+          "tags": ["fantasy", "support", "charismatic"]
+        }
+      ]
+    },
+    {
+      "id": "species",
+      "label": "Species / Race",
+      "attributes": [
+        {
+          "id": "human",
+          "category": "species",
+          "label": "Human",
+          "prompt_terms": ["human", "human adventurer"],
+          "compatible_with": [],
+          "tags": ["fantasy", "versatile"]
+        },
+        {
+          "id": "elf",
+          "category": "species",
+          "label": "Elf",
+          "prompt_terms": ["elf", "elven", "pointy-eared elf"],
+          "compatible_with": ["bow", "staff", "dagger"],
+          "tags": ["fantasy", "agile", "magic"]
+        },
+        {
+          "id": "dwarf",
+          "category": "species",
+          "label": "Dwarf",
+          "prompt_terms": ["dwarf", "dwarven", "stout dwarf"],
+          "compatible_with": ["axe", "plate_armor", "chainmail"],
+          "tags": ["fantasy", "sturdy", "melee"]
+        },
+        {
+          "id": "orc",
+          "category": "species",
+          "label": "Orc",
+          "prompt_terms": ["orc", "orcish", "green-skinned orc"],
+          "compatible_with": ["axe", "long_sword", "plate_armor"],
+          "tags": ["fantasy", "brutal", "melee"]
+        },
+        {
+          "id": "goblin",
+          "category": "species",
+          "label": "Goblin",
+          "prompt_terms": ["goblin", "goblinoid", "small goblin"],
+          "compatible_with": ["dagger", "short_sword", "leather_armor"],
+          "tags": ["fantasy", "small", "cunning"]
+        },
+        {
+          "id": "tiefling",
+          "category": "species",
+          "label": "Tiefling",
+          "prompt_terms": ["tiefling", "horned tiefling", "demonic tiefling"],
+          "compatible_with": ["dagger", "staff", "leather_armor"],
+          "tags": ["fantasy", "dark", "magic"]
+        },
+        {
+          "id": "undead",
+          "category": "species",
+          "label": "Undead",
+          "prompt_terms": ["undead", "skeletal", "zombie-like undead"],
+          "compatible_with": ["staff", "spellbook", "cloth_robes"],
+          "tags": ["fantasy", "dark", "horror"]
+        },
+        {
+          "id": "lizardfolk",
+          "category": "species",
+          "label": "Lizardfolk",
+          "prompt_terms": ["lizardfolk", "reptilian", "scaled lizardfolk"],
+          "compatible_with": ["spear", "axe", "leather_armor"],
+          "tags": ["fantasy", "reptilian", "wild"]
+        },
+        {
+          "id": "catfolk",
+          "category": "species",
+          "label": "Catfolk",
+          "prompt_terms": ["catfolk", "feline", "cat-like catfolk"],
+          "compatible_with": ["dagger", "short_sword", "leather_armor"],
+          "tags": ["fantasy", "agile", "feline"]
+        },
+        {
+          "id": "automaton",
+          "category": "species",
+          "label": "Automaton",
+          "prompt_terms": ["automaton", "mechanical construct", "clockwork automaton"],
+          "compatible_with": ["long_sword", "plate_armor", "staff"],
+          "tags": ["fantasy", "construct", "mechanical"]
+        }
+      ]
+    },
+    {
+      "id": "weapons",
+      "label": "Weapon",
+      "attributes": [
+        {
+          "id": "dagger",
+          "category": "weapons",
+          "label": "Dagger",
+          "prompt_terms": ["dagger", "twin daggers", "short blade"],
+          "compatible_with": ["rogue", "bard", "goblin"],
+          "tags": ["melee", "light", "stealth"]
+        },
+        {
+          "id": "short_sword",
+          "category": "weapons",
+          "label": "Short Sword",
+          "prompt_terms": ["short sword", "short blade", "gladius"],
+          "compatible_with": ["rogue", "warrior", "bard"],
+          "tags": ["melee", "light", "versatile"]
+        },
+        {
+          "id": "long_sword",
+          "category": "weapons",
+          "label": "Long Sword",
+          "prompt_terms": ["long sword", "broadsword", "greatsword"],
+          "compatible_with": ["warrior", "paladin", "samurai"],
+          "tags": ["melee", "heavy", "versatile"]
+        },
+        {
+          "id": "bow",
+          "category": "weapons",
+          "label": "Bow",
+          "prompt_terms": ["bow", "longbow", "elven bow"],
+          "compatible_with": ["archer", "elf", "druid"],
+          "tags": ["ranged", "light"]
+        },
+        {
+          "id": "staff",
+          "category": "weapons",
+          "label": "Staff",
+          "prompt_terms": ["staff", "wizard staff", "arcane staff"],
+          "compatible_with": ["mage", "necromancer", "druid", "monk"],
+          "tags": ["magic", "melee", "versatile"]
+        },
+        {
+          "id": "wand",
+          "category": "weapons",
+          "label": "Wand",
+          "prompt_terms": ["wand", "magic wand", "arcane wand"],
+          "compatible_with": ["mage", "necromancer", "alchemist"],
+          "tags": ["magic", "light", "ranged"]
+        },
+        {
+          "id": "spear",
+          "category": "weapons",
+          "label": "Spear",
+          "prompt_terms": ["spear", "pike", "lance"],
+          "compatible_with": ["warrior", "lizardfolk", "samurai"],
+          "tags": ["melee", "reach", "versatile"]
+        },
+        {
+          "id": "axe",
+          "category": "weapons",
+          "label": "Axe",
+          "prompt_terms": ["axe", "battle axe", "war axe"],
+          "compatible_with": ["warrior", "dwarf", "orc"],
+          "tags": ["melee", "heavy", "brutal"]
+        },
+        {
+          "id": "crossbow",
+          "category": "weapons",
+          "label": "Crossbow",
+          "prompt_terms": ["crossbow", "hand crossbow", "heavy crossbow"],
+          "compatible_with": ["gunslinger", "archer", "rogue"],
+          "tags": ["ranged", "mechanical"]
+        },
+        {
+          "id": "spellbook",
+          "category": "weapons",
+          "label": "Spellbook",
+          "prompt_terms": ["spellbook", "grimoire", "arcane tome"],
+          "compatible_with": ["mage", "necromancer", "alchemist"],
+          "tags": ["magic", "knowledge"]
+        }
+      ]
+    },
+    {
+      "id": "armor",
+      "label": "Armor / Clothing",
+      "attributes": [
+        {
+          "id": "cloth_robes",
+          "category": "armor",
+          "label": "Cloth Robes",
+          "prompt_terms": ["cloth robes", "simple robes", "flowing robes"],
+          "compatible_with": ["mage", "necromancer", "monk", "druid"],
+          "tags": ["light", "magic", "cloth"]
+        },
+        {
+          "id": "leather_armor",
+          "category": "armor",
+          "label": "Leather Armor",
+          "prompt_terms": ["leather armor", "studded leather", "dark leather armor"],
+          "compatible_with": ["rogue", "archer", "bard", "druid"],
+          "tags": ["light", "agile", "leather"]
+        },
+        {
+          "id": "chainmail",
+          "category": "armor",
+          "label": "Chainmail",
+          "prompt_terms": ["chainmail", "chain mail", "ring mail armor"],
+          "compatible_with": ["warrior", "paladin", "dwarf"],
+          "tags": ["medium", "melee", "metal"]
+        },
+        {
+          "id": "plate_armor",
+          "category": "armor",
+          "label": "Plate Armor",
+          "prompt_terms": ["plate armor", "full plate", "heavy plate armor"],
+          "compatible_with": ["warrior", "paladin", "samurai"],
+          "tags": ["heavy", "tank", "metal"]
+        },
+        {
+          "id": "hooded_cloak",
+          "category": "armor",
+          "label": "Hooded Cloak",
+          "prompt_terms": ["hooded cloak", "dark cloak", "traveler's cloak"],
+          "compatible_with": ["rogue", "archer", "necromancer", "druid"],
+          "tags": ["light", "stealth", "cloth"]
+        },
+        {
+          "id": "traveling_clothes",
+          "category": "armor",
+          "label": "Traveling Clothes",
+          "prompt_terms": ["traveling clothes", "adventurer's outfit", "worn traveling garb"],
+          "compatible_with": ["monk", "bard", "alchemist", "rogue"],
+          "tags": ["light", "versatile", "cloth"]
+        },
+        {
+          "id": "enchanted_robes",
+          "category": "armor",
+          "label": "Enchanted Robes",
+          "prompt_terms": ["enchanted robes", "glowing magical robes", "mystic vestments"],
+          "compatible_with": ["mage", "necromancer", "druid", "paladin"],
+          "tags": ["light", "magic", "cloth"]
+        }
+      ]
+    },
+    {
+      "id": "poses",
+      "label": "Pose / Stance",
+      "attributes": [
+        {
+          "id": "idle_stance",
+          "category": "poses",
+          "label": "Idle Stance",
+          "prompt_terms": ["symmetrical idle stance", "neutral idle pose", "standing idle"],
+          "compatible_with": [],
+          "tags": ["idle", "neutral"]
+        },
+        {
+          "id": "ready_stance",
+          "category": "poses",
+          "label": "Ready Stance",
+          "prompt_terms": ["ready stance", "battle-ready pose", "combat stance"],
+          "compatible_with": [],
+          "tags": ["combat", "active"]
+        },
+        {
+          "id": "neutral_standing",
+          "category": "poses",
+          "label": "Neutral Standing",
+          "prompt_terms": ["neutral standing pose", "relaxed standing", "upright stance"],
+          "compatible_with": [],
+          "tags": ["neutral", "calm"]
+        },
+        {
+          "id": "battle_pose",
+          "category": "poses",
+          "label": "Battle Pose",
+          "prompt_terms": ["battle-ready pose", "dynamic combat pose", "attacking stance"],
+          "compatible_with": [],
+          "tags": ["combat", "dynamic"]
+        },
+        {
+          "id": "relaxed_idle",
+          "category": "poses",
+          "label": "Relaxed Idle",
+          "prompt_terms": ["relaxed idle stance", "casual standing", "at ease pose"],
+          "compatible_with": [],
+          "tags": ["relaxed", "casual"]
+        }
+      ]
+    },
+    {
+      "id": "styles",
+      "label": "Art Style",
+      "attributes": [
+        {
+          "id": "2d_game_sprite",
+          "category": "styles",
+          "label": "2D Game Sprite",
+          "prompt_terms": ["2D game sprite", "2D sprite", "game sprite style"],
+          "compatible_with": [],
+          "tags": ["sprite", "2d"]
+        },
+        {
+          "id": "pixel_art",
+          "category": "styles",
+          "label": "Pixel Art",
+          "prompt_terms": ["pixel art sprite", "pixel art character", "retro pixel sprite"],
+          "compatible_with": [],
+          "tags": ["sprite", "pixel", "retro"]
+        },
+        {
+          "id": "cel_shaded",
+          "category": "styles",
+          "label": "Cel-Shaded",
+          "prompt_terms": ["simple cel shading", "cel-shaded sprite", "flat shaded character"],
+          "compatible_with": [],
+          "tags": ["sprite", "cel-shaded", "clean"]
+        },
+        {
+          "id": "dark_fantasy",
+          "category": "styles",
+          "label": "Dark Fantasy",
+          "prompt_terms": ["dark fantasy sprite", "dark fantasy character", "gothic fantasy style"],
+          "compatible_with": [],
+          "tags": ["sprite", "dark", "fantasy"]
+        },
+        {
+          "id": "tactical_rpg",
+          "category": "styles",
+          "label": "Tactical RPG",
+          "prompt_terms": ["tactical RPG sprite", "tactical RPG character", "strategy game sprite"],
+          "compatible_with": [],
+          "tags": ["sprite", "tactical", "strategy"]
+        },
+        {
+          "id": "snes_style",
+          "category": "styles",
+          "label": "SNES-Inspired",
+          "prompt_terms": ["SNES-inspired sprite", "16-bit sprite", "SNES RPG character"],
+          "compatible_with": [],
+          "tags": ["sprite", "retro", "16-bit"]
+        },
+        {
+          "id": "indie_game",
+          "category": "styles",
+          "label": "Modern Indie Game",
+          "prompt_terms": ["clean indie game asset", "modern indie sprite", "indie game character"],
+          "compatible_with": [],
+          "tags": ["sprite", "indie", "modern"]
+        },
+        {
+          "id": "chibi",
+          "category": "styles",
+          "label": "Chibi",
+          "prompt_terms": ["chibi sprite", "chibi character", "super-deformed sprite"],
+          "compatible_with": [],
+          "tags": ["sprite", "chibi", "cute"]
+        }
+      ]
+    },
+    {
+      "id": "views",
+      "label": "View / Camera Angle",
+      "attributes": [
+        {
+          "id": "front_view",
+          "category": "views",
+          "label": "Front View",
+          "prompt_terms": ["front view", "facing forward", "head-on view"],
+          "compatible_with": [],
+          "tags": ["front", "orthographic"]
+        },
+        {
+          "id": "side_view",
+          "category": "views",
+          "label": "Side View",
+          "prompt_terms": ["side view", "profile view", "lateral view"],
+          "compatible_with": [],
+          "tags": ["side", "platformer"]
+        },
+        {
+          "id": "three_quarter_view",
+          "category": "views",
+          "label": "3/4 View",
+          "prompt_terms": ["3/4 view", "three-quarter view", "isometric angle"],
+          "compatible_with": [],
+          "tags": ["3/4", "isometric"]
+        },
+        {
+          "id": "top_down",
+          "category": "views",
+          "label": "Top-Down",
+          "prompt_terms": ["top-down view", "overhead view", "bird's-eye view"],
+          "compatible_with": [],
+          "tags": ["top-down", "overhead"]
+        },
+        {
+          "id": "back_view",
+          "category": "views",
+          "label": "Back View",
+          "prompt_terms": ["back view", "rear view", "from behind"],
+          "compatible_with": [],
+          "tags": ["back", "rear"]
+        }
+      ]
+    },
+    {
+      "id": "palettes",
+      "label": "Color Palette",
+      "attributes": [
+        {
+          "id": "limited_palette",
+          "category": "palettes",
+          "label": "Limited Color Palette",
+          "prompt_terms": ["limited color palette", "restricted palette", "few colors"],
+          "compatible_with": [],
+          "tags": ["limited", "retro"]
+        },
+        {
+          "id": "monochrome",
+          "category": "palettes",
+          "label": "Monochrome",
+          "prompt_terms": ["monochrome palette", "single-hue palette", "grayscale tones"],
+          "compatible_with": [],
+          "tags": ["monochrome", "minimal"]
+        },
+        {
+          "id": "vibrant",
+          "category": "palettes",
+          "label": "Vibrant",
+          "prompt_terms": ["vibrant color palette", "saturated colors", "bold vivid palette"],
+          "compatible_with": [],
+          "tags": ["vibrant", "bold"]
+        },
+        {
+          "id": "muted",
+          "category": "palettes",
+          "label": "Muted",
+          "prompt_terms": ["muted color palette", "desaturated tones", "earthy muted colors"],
+          "compatible_with": [],
+          "tags": ["muted", "subtle"]
+        },
+        {
+          "id": "dark_palette",
+          "category": "palettes",
+          "label": "Dark Palette",
+          "prompt_terms": ["dark color palette", "shadowy tones", "deep dark hues"],
+          "compatible_with": [],
+          "tags": ["dark", "moody"]
+        },
+        {
+          "id": "pastel",
+          "category": "palettes",
+          "label": "Pastel",
+          "prompt_terms": ["pastel color palette", "soft pastel tones", "light pastel colors"],
+          "compatible_with": [],
+          "tags": ["pastel", "soft"]
+        }
+      ]
+    },
+    {
+      "id": "moods",
+      "label": "Mood / Personality",
+      "attributes": [
+        {
+          "id": "stealthy",
+          "category": "moods",
+          "label": "Stealthy",
+          "prompt_terms": ["stealthy expression", "sneaky demeanor", "shadowy presence"],
+          "compatible_with": ["rogue", "necromancer"],
+          "tags": ["stealth", "dark"]
+        },
+        {
+          "id": "fierce",
+          "category": "moods",
+          "label": "Fierce",
+          "prompt_terms": ["fierce expression", "intense glare", "battle-hardened look"],
+          "compatible_with": ["warrior", "orc"],
+          "tags": ["combat", "intense"]
+        },
+        {
+          "id": "mysterious",
+          "category": "moods",
+          "label": "Mysterious",
+          "prompt_terms": ["mysterious aura", "enigmatic presence", "shadowy demeanor"],
+          "compatible_with": ["mage", "necromancer"],
+          "tags": ["mystery", "dark"]
+        },
+        {
+          "id": "cheerful",
+          "category": "moods",
+          "label": "Cheerful",
+          "prompt_terms": ["cheerful expression", "bright smile", "friendly demeanor"],
+          "compatible_with": ["bard", "druid"],
+          "tags": ["positive", "bright"]
+        },
+        {
+          "id": "stoic",
+          "category": "moods",
+          "label": "Stoic",
+          "prompt_terms": ["stoic expression", "calm resolute face", "unwavering gaze"],
+          "compatible_with": ["paladin", "monk", "samurai"],
+          "tags": ["calm", "disciplined"]
+        },
+        {
+          "id": "menacing",
+          "category": "moods",
+          "label": "Menacing",
+          "prompt_terms": ["menacing glare", "threatening presence", "intimidating scowl"],
+          "compatible_with": ["necromancer", "orc"],
+          "tags": ["dark", "threatening"]
+        },
+        {
+          "id": "noble",
+          "category": "moods",
+          "label": "Noble",
+          "prompt_terms": ["noble bearing", "regal posture", "dignified expression"],
+          "compatible_with": ["paladin", "elf"],
+          "tags": ["noble", "regal"]
+        },
+        {
+          "id": "wild",
+          "category": "moods",
+          "label": "Wild",
+          "prompt_terms": ["wild expression", "feral look", "untamed energy"],
+          "compatible_with": ["druid", "lizardfolk", "orc"],
+          "tags": ["wild", "feral"]
+        }
+      ]
+    },
+    {
+      "id": "output_types",
+      "label": "Output Type",
+      "attributes": [
+        {
+          "id": "full_body_sprite",
+          "category": "output_types",
+          "label": "Full-Body Sprite",
+          "prompt_terms": ["full body sprite", "full-body character", "complete figure sprite"],
+          "compatible_with": [],
+          "tags": ["full-body", "sprite"]
+        },
+        {
+          "id": "bust_portrait",
+          "category": "output_types",
+          "label": "Bust Portrait",
+          "prompt_terms": ["bust portrait", "head and shoulders portrait", "upper body portrait"],
+          "compatible_with": [],
+          "tags": ["portrait", "bust"]
+        },
+        {
+          "id": "top_down_sprite",
+          "category": "output_types",
+          "label": "Top-Down Sprite",
+          "prompt_terms": ["top-down sprite", "overhead character sprite", "top-down game asset"],
+          "compatible_with": [],
+          "tags": ["top-down", "sprite"]
+        },
+        {
+          "id": "enemy_sprite",
+          "category": "output_types",
+          "label": "Enemy Sprite",
+          "prompt_terms": ["enemy sprite", "monster sprite", "hostile character sprite"],
+          "compatible_with": [],
+          "tags": ["enemy", "hostile"]
+        },
+        {
+          "id": "npc_sprite",
+          "category": "output_types",
+          "label": "NPC Sprite",
+          "prompt_terms": ["NPC sprite", "non-player character sprite", "villager sprite"],
+          "compatible_with": [],
+          "tags": ["npc", "friendly"]
+        },
+        {
+          "id": "boss_concept",
+          "category": "output_types",
+          "label": "Boss Concept",
+          "prompt_terms": ["boss character concept", "large boss sprite", "boss enemy design"],
+          "compatible_with": [],
+          "tags": ["boss", "concept"]
+        }
+      ]
+    },
+    {
+      "id": "backgrounds",
+      "label": "Background",
+      "attributes": [
+        {
+          "id": "plain_white",
+          "category": "backgrounds",
+          "label": "Plain White",
+          "prompt_terms": ["plain white background", "white background", "solid white backdrop"],
+          "compatible_with": [],
+          "tags": ["white", "clean"]
+        },
+        {
+          "id": "transparent",
+          "category": "backgrounds",
+          "label": "Transparent",
+          "prompt_terms": ["transparent background", "no background", "isolated on transparent"],
+          "compatible_with": [],
+          "tags": ["transparent", "isolated"]
+        },
+        {
+          "id": "simple_gradient",
+          "category": "backgrounds",
+          "label": "Simple Gradient",
+          "prompt_terms": ["simple gradient background", "soft gradient backdrop", "subtle gradient"],
+          "compatible_with": [],
+          "tags": ["gradient", "subtle"]
+        },
+        {
+          "id": "dark_solid",
+          "category": "backgrounds",
+          "label": "Dark Solid",
+          "prompt_terms": ["dark solid background", "black background", "dark backdrop"],
+          "compatible_with": [],
+          "tags": ["dark", "solid"]
+        },
+        {
+          "id": "dungeon_floor",
+          "category": "backgrounds",
+          "label": "Dungeon Floor",
+          "prompt_terms": ["stone dungeon floor background", "dungeon tile floor", "cave floor backdrop"],
+          "compatible_with": [],
+          "tags": ["dungeon", "stone"]
+        },
+        {
+          "id": "forest_scene",
+          "category": "backgrounds",
+          "label": "Forest Scene",
+          "prompt_terms": ["simple forest background", "woodland backdrop", "tree line background"],
+          "compatible_with": [],
+          "tags": ["forest", "nature"]
+        }
+      ]
+    }
+  ]
+}

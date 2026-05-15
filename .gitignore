@@ -1,0 +1,57 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+eggs/
+*.whl
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# SQLite database
+*.db
+*.sqlite3
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+
+# Node / Frontend
+node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Coverage / Testing
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+pytest_cache/
+.pytest_cache/
+
+# MyPy / Type checking
+.mypy_cache/
+.dmypy.json
+
+# OS
+Thumbs.db
+Desktop.ini

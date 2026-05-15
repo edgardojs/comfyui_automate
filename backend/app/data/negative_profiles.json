@@ -1,0 +1,254 @@
+{
+  "profiles": [
+    {
+      "id": "general_sprite_cleanup",
+      "label": "General Sprite Cleanup",
+      "description": "Removes text, watermarks, blur, bad anatomy, and messy backgrounds. Good default for most sprite generation.",
+      "categories": [
+        {
+          "id": "text_artifacts",
+          "label": "Text Artifacts",
+          "enabled": true,
+          "terms": ["text", "watermark", "logo", "signature", "username"]
+        },
+        {
+          "id": "blur_artifacts",
+          "label": "Blur & Resolution",
+          "enabled": true,
+          "terms": ["blurry", "low resolution", "pixelated", "jpeg artifacts", "compression artifacts"]
+        },
+        {
+          "id": "anatomy_errors",
+          "label": "Anatomy Errors",
+          "enabled": true,
+          "terms": ["extra limbs", "missing limbs", "bad anatomy", "deformed hands", "missing hands", "extra fingers", "mutated", "disfigured"]
+        },
+        {
+          "id": "cropping",
+          "label": "Cropping Issues",
+          "enabled": true,
+          "terms": ["cropped", "out of frame", "cut off"]
+        },
+        {
+          "id": "multiple_characters",
+          "label": "Multiple Characters",
+          "enabled": true,
+          "terms": ["multiple characters", "duplicate character", "extra person"]
+        },
+        {
+          "id": "realistic_photo",
+          "label": "Realistic Photography",
+          "enabled": true,
+          "terms": ["realistic photo", "photograph", "3d render", "photorealistic"]
+        },
+        {
+          "id": "complex_background",
+          "label": "Complex Background",
+          "enabled": true,
+          "terms": ["complex background", "detailed background", "busy background", "scenery", "landscape"]
+        },
+        {
+          "id": "perspective_distortion",
+          "label": "Perspective Distortion",
+          "enabled": true,
+          "terms": ["perspective distortion", "dynamic camera angle", "fish-eye", "extreme foreshortening"]
+        },
+        {
+          "id": "excessive_detail",
+          "label": "Excessive Detail",
+          "enabled": true,
+          "terms": ["excessive detail", "overly detailed", "messy silhouette", "noisy texture"]
+        },
+        {
+          "id": "sprite_readability",
+          "label": "Sprite Readability",
+          "enabled": true,
+          "terms": ["unreadable at small size", "muddled colors", "blended outlines"]
+        }
+      ]
+    },
+    {
+      "id": "pixel_art_cleanup",
+      "label": "Pixel Art Cleanup",
+      "description": "Removes anti-aliasing artifacts, excessive gradients, realism, and painterly details. Optimized for pixel-art sprite generation.",
+      "categories": [
+        {
+          "id": "text_artifacts",
+          "label": "Text Artifacts",
+          "enabled": true,
+          "terms": ["text", "watermark", "logo", "signature", "username"]
+        },
+        {
+          "id": "blur_artifacts",
+          "label": "Blur & Resolution",
+          "enabled": true,
+          "terms": ["blurry", "low resolution", "jpeg artifacts", "compression artifacts"]
+        },
+        {
+          "id": "anatomy_errors",
+          "label": "Anatomy Errors",
+          "enabled": true,
+          "terms": ["extra limbs", "missing limbs", "bad anatomy", "deformed hands", "missing hands", "extra fingers", "mutated", "disfigured"]
+        },
+        {
+          "id": "anti_aliasing",
+          "label": "Anti-Aliasing Artifacts",
+          "enabled": true,
+          "terms": ["anti-aliasing", "smooth edges", "subpixel rendering", "anti-aliased lines"]
+        },
+        {
+          "id": "gradients",
+          "label": "Excessive Gradients",
+          "enabled": true,
+          "terms": ["gradient shading", "smooth gradients", "soft shading", "airbrushed"]
+        },
+        {
+          "id": "realism",
+          "label": "Realism & Painterly",
+          "enabled": true,
+          "terms": ["realistic photo", "photograph", "3d render", "photorealistic", "painterly", "oil painting", "watercolor"]
+        },
+        {
+          "id": "complex_background",
+          "label": "Complex Background",
+          "enabled": true,
+          "terms": ["complex background", "detailed background", "busy background", "scenery", "landscape"]
+        },
+        {
+          "id": "excessive_detail",
+          "label": "Excessive Detail",
+          "enabled": true,
+          "terms": ["excessive detail", "overly detailed", "high-frequency detail", "noisy texture", "subtle texture"]
+        },
+        {
+          "id": "sprite_readability",
+          "label": "Sprite Readability",
+          "enabled": true,
+          "terms": ["unreadable at small size", "muddled colors", "blended outlines", "color bleed"]
+        }
+      ]
+    },
+    {
+      "id": "cel_shaded_cleanup",
+      "label": "Cel-Shaded Cleanup",
+      "description": "Removes photorealism, over-rendering, complex lighting, and noisy textures. Optimized for cel-shaded sprite generation.",
+      "categories": [
+        {
+          "id": "text_artifacts",
+          "label": "Text Artifacts",
+          "enabled": true,
+          "terms": ["text", "watermark", "logo", "signature", "username"]
+        },
+        {
+          "id": "blur_artifacts",
+          "label": "Blur & Resolution",
+          "enabled": true,
+          "terms": ["blurry", "low resolution", "jpeg artifacts", "compression artifacts"]
+        },
+        {
+          "id": "anatomy_errors",
+          "label": "Anatomy Errors",
+          "enabled": true,
+          "terms": ["extra limbs", "missing limbs", "bad anatomy", "deformed hands", "missing hands", "extra fingers", "mutated", "disfigured"]
+        },
+        {
+          "id": "photorealism",
+          "label": "Photorealism & Over-Rendering",
+          "enabled": true,
+          "terms": ["photorealistic", "realistic photo", "photograph", "3d render", "over-rendered", "hyper-detailed"]
+        },
+        {
+          "id": "complex_lighting",
+          "label": "Complex Lighting",
+          "enabled": true,
+          "terms": ["complex lighting", "dramatic lighting", "volumetric lighting", "ray tracing", "global illumination"]
+        },
+        {
+          "id": "noisy_textures",
+          "label": "Noisy Textures",
+          "enabled": true,
+          "terms": ["noisy texture", "grainy", "film grain", "subsurface scattering", "skin pores"]
+        },
+        {
+          "id": "complex_background",
+          "label": "Complex Background",
+          "enabled": true,
+          "terms": ["complex background", "detailed background", "busy background", "scenery", "landscape"]
+        },
+        {
+          "id": "perspective_distortion",
+          "label": "Perspective Distortion",
+          "enabled": true,
+          "terms": ["perspective distortion", "dynamic camera angle", "fish-eye", "extreme foreshortening"]
+        },
+        {
+          "id": "sprite_readability",
+          "label": "Sprite Readability",
+          "enabled": true,
+          "terms": ["unreadable at small size", "muddled colors", "blended outlines"]
+        }
+      ]
+    },
+    {
+      "id": "character_isolation_cleanup",
+      "label": "Character Isolation Cleanup",
+      "description": "Removes backgrounds, multiple characters, cropping, props, and scenery. Optimized for generating isolated character sprites on clean backgrounds.",
+      "categories": [
+        {
+          "id": "text_artifacts",
+          "label": "Text Artifacts",
+          "enabled": true,
+          "terms": ["text", "watermark", "logo", "signature", "username"]
+        },
+        {
+          "id": "blur_artifacts",
+          "label": "Blur & Resolution",
+          "enabled": true,
+          "terms": ["blurry", "low resolution", "jpeg artifacts", "compression artifacts"]
+        },
+        {
+          "id": "anatomy_errors",
+          "label": "Anatomy Errors",
+          "enabled": true,
+          "terms": ["extra limbs", "missing limbs", "bad anatomy", "deformed hands", "missing hands", "extra fingers", "mutated", "disfigured"]
+        },
+        {
+          "id": "background_removal",
+          "label": "Background Removal",
+          "enabled": true,
+          "terms": ["background", "scenery", "landscape", "environment", "indoor scene", "outdoor scene", "sky", "ground texture"]
+        },
+        {
+          "id": "multiple_characters",
+          "label": "Multiple Characters",
+          "enabled": true,
+          "terms": ["multiple characters", "duplicate character", "extra person", "crowd", "group"]
+        },
+        {
+          "id": "cropping",
+          "label": "Cropping Issues",
+          "enabled": true,
+          "terms": ["cropped", "out of frame", "cut off", "partially visible"]
+        },
+        {
+          "id": "extra_props",
+          "label": "Extra Props & Scenery",
+          "enabled": true,
+          "terms": ["extra props", "furniture", "objects", "clutter", "decorative elements"]
+        },
+        {
+          "id": "realistic_photo",
+          "label": "Realistic Photography",
+          "enabled": true,
+          "terms": ["realistic photo", "photograph", "3d render", "photorealistic"]
+        },
+        {
+          "id": "sprite_readability",
+          "label": "Sprite Readability",
+          "enabled": true,
+          "terms": ["unreadable at small size", "muddled colors", "blended outlines"]
+        }
+      ]
+    }
+  ]
+}

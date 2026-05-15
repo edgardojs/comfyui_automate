@@ -1,0 +1,109 @@
+{
+  "templates": [
+    {
+      "id": "front_view_sprite",
+      "label": "Front-View RPG Sprite",
+      "description": "Full-body front-view sprite for RPG characters, suitable for character select screens and inventory.",
+      "template": "{output_type}, full body, front view, {species} {class}, {equipment}, {armor}, {mood}, {pose}, orthographic view, clean silhouette, simplified details, {palette}, {style}, crisp black outline, centered, {background}, game asset, readable at small size",
+      "placeholders": [
+        "output_type",
+        "species",
+        "class",
+        "equipment",
+        "armor",
+        "mood",
+        "pose",
+        "palette",
+        "style",
+        "background"
+      ]
+    },
+    {
+      "id": "side_view_sprite",
+      "label": "Side-View Platformer Sprite",
+      "description": "Side-view sprite for platformer games, suitable for run/jump/idle animations.",
+      "template": "{output_type}, full body, side view, {species} {class}, {equipment}, {armor}, {mood}, {pose}, {style}, clean silhouette, simplified details, {palette}, crisp outline, {background}, game asset, readable at small size",
+      "placeholders": [
+        "output_type",
+        "species",
+        "class",
+        "equipment",
+        "armor",
+        "mood",
+        "pose",
+        "palette",
+        "style",
+        "background"
+      ]
+    },
+    {
+      "id": "top_down_sprite",
+      "label": "Top-Down Roguelike Sprite",
+      "description": "Top-down sprite for roguelike and dungeon-crawler games.",
+      "template": "{output_type}, top-down view, {species} {class}, {equipment}, {armor}, {mood}, {style}, simplified details, {palette}, small readable silhouette, {background}, game asset, tile-based",
+      "placeholders": [
+        "output_type",
+        "species",
+        "class",
+        "equipment",
+        "armor",
+        "mood",
+        "palette",
+        "style",
+        "background"
+      ]
+    },
+    {
+      "id": "bust_portrait",
+      "label": "Bust Portrait Concept",
+      "description": "Head and shoulders portrait for dialogue boxes and character profiles.",
+      "template": "{output_type}, head and shoulders portrait, {view}, {species} {class}, {mood}, {style}, {palette}, {background}, game concept art, expressive face, clean lines",
+      "placeholders": [
+        "output_type",
+        "view",
+        "species",
+        "class",
+        "mood",
+        "palette",
+        "style",
+        "background"
+      ]
+    },
+    {
+      "id": "pixel_art_sprite",
+      "label": "Pixel-Art Idle Sprite",
+      "description": "Pixel-art style sprite for retro games, emphasizing clean pixel boundaries and limited colors.",
+      "template": "{output_type}, full body, {view}, {species} {class}, {equipment}, {armor}, {mood}, {pose}, pixel art, {palette}, crisp pixel outline, no anti-aliasing, {background}, game asset, readable at small size, retro pixel art style",
+      "placeholders": [
+        "output_type",
+        "view",
+        "species",
+        "class",
+        "equipment",
+        "armor",
+        "mood",
+        "pose",
+        "palette",
+        "background"
+      ]
+    },
+    {
+      "id": "cel_shaded_sprite",
+      "label": "Cel-Shaded Game Asset",
+      "description": "Cel-shaded sprite with flat colors and bold outlines, suitable for modern indie games.",
+      "template": "{output_type}, full body, {view}, {species} {class}, {equipment}, {armor}, {mood}, {pose}, simple cel shading, bold black outline, flat colors, {palette}, clean silhouette, {background}, game asset, readable at small size",
+      "placeholders": [
+        "output_type",
+        "view",
+        "species",
+        "class",
+        "equipment",
+        "armor",
+        "mood",
+        "pose",
+        "palette",
+        "background"
+      ]
+    }
+  ]
+}
