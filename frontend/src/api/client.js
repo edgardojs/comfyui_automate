@@ -164,3 +164,99 @@ export async function healthCheck() {
   if (!res.ok) throw new Error(`Health check failed: ${res.status}`);
   return safeJson(res);
 }
+
+// ---------------------------------------------------------------------------
+// ComfyUI Integration API
+// ---------------------------------------------------------------------------
+
+/**
+ * Test connection to a ComfyUI server.
+ * @param {string} serverUrl - The ComfyUI server URL (e.g. "http://127.0.0.1:8188")
+ * @returns {Promise<object>} Connection test result with connected, message, and system_info
+ */
+export async function testComfyUIConnection(serverUrl) {
+  const res = await fetch(`${API_BASE}/comfyui/test`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ server_url: serverUrl }),
+  });
+  if (!res.ok) throw new Error(`Connection test failed: ${res.status}`);
+  return safeJson(res);
+}
+
+/**
+ * Validate a ComfyUI workflow JSON and extract node IDs.
+ * @param {object} workflowJson - The workflow JSON object to validate
+ * @returns {Promise<object>} Validation result with valid, issues, and node_ids
+ */
+export async function validateComfyUIWorkflow(workflowJson) {
+  const res = await fetch(`${API_BASE}/comfyui/validate-workflow`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ workflow_json: workflowJson }),
+  });
+  if (!res.ok) throw new Error(`Workflow validation failed: ${res.status}`);
+  return safeJson(res);
+}
+
+/**
+ * Submit a prompt to ComfyUI.
+ * @param {object} params
+ * @param {string} params.serverUrl - ComfyUI server URL
+ * @param {object} params.workflowJson - The workflow JSON to patch and submit
+ * @param {string} params.positivePrompt - Positive prompt text
+ * @param {string} params.negativePrompt - Negative prompt text
+ * @param {object} params.nodeMapping - Node ID mapping for prompt injection
+ * @param {number} [params.seed] - Optional seed value
+ * @returns {Promise<object>} Submission result with success, prompt_id, and message
+ */
+export async function submitToComfyUI({
+  serverUrl,
+  workflowJson,
+  positivePrompt,
+  negativePrompt,
+  nodeMapping,
+  seed,
+}) {
+  const res = await fetch(`${API_BASE}/comfyui/submit`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      server_url: serverUrl,
+      workflow_json: workflowJson,
+      positive_prompt: positivePrompt,
+      negative_prompt: negativePrompt,
+      node_mapping: nodeMapping,
+      seed: seed ?? null,
+    }),
+  });
+  if (!res.ok) {
+    let detail = `Submission failed: ${res.status}`;
+    try {
+      const errBody = await res.json();
+      if (errBody.detail) detail = errBody.detail;
+    } catch {
+      // Ignore parse errors
+    }
+    throw new Error(detail);
+  }
+  return safeJson(res);
+}
+
+/**
+ * Check the status of a ComfyUI generation.
+ * @param {string} promptId - The prompt ID returned from submission
+ * @param {string} [serverUrl] - ComfyUI server URL (defaults to localhost)
+ * @returns {Promise<object>} Status result with prompt_id, status, and message
+ */
+export async function checkComfyUIStatus(promptId, serverUrl) {
+  const params = new URLSearchParams();
+  if (serverUrl) params.set("server_url", serverUrl);
+  const qs = params.toString();
+  const url = qs
+    ? `${API_BASE}/comfyui/status/${encodeURIComponent(promptId)}?${qs}`
+    : `${API_BASE}/comfyui/status/${encodeURIComponent(promptId)}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Status check failed: ${res.status}`);
+  return safeJson(res);
+}

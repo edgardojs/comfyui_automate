@@ -229,7 +229,7 @@ This plan follows the SRS's recommended MVP priority (Section 24), focusing on *
 
 ---
 
-## Milestone 6: ComfyUI Integration (Phase 2 of SRS)
+## Milestone 6: ComfyUI Integration (Phase 2 of SRS) ✅ COMPLETE
 
 **Goal:** Connect to a ComfyUI instance and submit generated prompts.
 
@@ -242,32 +242,36 @@ This plan follows the SRS's recommended MVP priority (Section 24), focusing on *
 
 ### Tasks
 
-#### 6.1 ComfyUI Settings (`frontend/src/pages/ComfyUISettings.jsx`)
-- [ ] Server URL input with "Test Connection" button
-- [ ] Workflow JSON file upload or text paste
-- [ ] Node mapping fields: positive node ID, negative node ID, seed node ID
-- [ ] Save settings to localStorage
+#### 6.1 ComfyUI Settings (`frontend/src/pages/ComfyUISettings.jsx`) ✅ COMPLETE
+- [x] Server URL input with "Test Connection" button
+- [x] Workflow JSON file upload or text paste
+- [x] Node mapping fields: positive node ID, negative node ID, seed node ID
+- [x] Save settings to localStorage
+- [x] Validate workflow JSON and extract node IDs
+- [x] Reset to defaults button
 
-#### 6.2 ComfyUI Connector (`backend/app/core/workflow_patcher.py`)
-- [ ] Implement `patch_workflow(workflow_json, positive_prompt, negative_prompt, node_mapping, seed)`:
+#### 6.2 ComfyUI Connector (`backend/app/core/workflow_patcher.py`) ✅ COMPLETE
+- [x] Implement `patch_workflow(workflow_json, positive_prompt, negative_prompt, node_mapping, seed)`:
   1. Load workflow JSON
   2. Find target nodes by ID
   3. Inject prompt text into specified input fields
   4. Optionally inject seed value
   5. Return patched workflow JSON
-- [ ] Implement `submit_to_comfyui(server_url, patched_workflow)`:
-  1. POST to `{server_url}/prompt`
-  2. Return prompt ID and status
+- [x] Implement `validate_workflow(workflow_json)` — validates workflow structure
+- [x] Implement `extract_node_ids(workflow_json)` — extracts available node IDs and class types
+- [x] Support both API-format and UI-format ComfyUI workflows
 
-#### 6.3 ComfyUI API (`backend/app/api/comfyui.py`)
-- [ ] `POST /api/comfyui/test` — Test connection to ComfyUI server
-- [ ] `POST /api/comfyui/submit` — Submit prompt to ComfyUI
-- [ ] `GET /api/comfyui/status/{prompt_id}` — Check generation status (optional for MVP)
+#### 6.3 ComfyUI API (`backend/app/api/comfyui.py`) ✅ COMPLETE
+- [x] `POST /api/comfyui/test` — Test connection to ComfyUI server
+- [x] `POST /api/comfyui/validate-workflow` — Validate workflow JSON and extract node IDs
+- [x] `POST /api/comfyui/submit` — Submit prompt to ComfyUI
+- [x] `GET /api/comfyui/status/{prompt_id}` — Check generation status (optional for MVP)
 
-#### 6.4 Submit Button in UI
-- [ ] Add "Send to ComfyUI" button on each prompt result card
-- [ ] Show success/error feedback
-- [ ] Display ComfyUI prompt ID on success
+#### 6.4 Submit Button in UI ✅ COMPLETE
+- [x] Add "Send to ComfyUI" button on each prompt result card
+- [x] Show success/error feedback
+- [x] Display ComfyUI prompt ID on success
+- [x] Graceful handling when ComfyUI is not configured
 
 ---
 

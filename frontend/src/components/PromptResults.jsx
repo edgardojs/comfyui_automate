@@ -2,9 +2,10 @@
  * PromptResults — Displays generated prompt pairs with copy buttons.
  *
  * Shows each variation as a card with positive/negative prompts,
- * copy buttons, and the resolved attributes used.
+ * copy buttons, and the resolved attributes used. Optionally includes
+ * a "Send to ComfyUI" button when ComfyUI settings are configured.
  */
-function PromptResults({ results, error, isGenerating, onCopy }) {
+function PromptResults({ results, error, isGenerating, onCopy, onSendToComfyUI, comfyUISubmitting, comfyUIResult }) {
   // Loading state
   if (isGenerating && !results) {
     return (
@@ -93,6 +94,16 @@ function PromptResults({ results, error, isGenerating, onCopy }) {
               >
                 📋 Both
               </button>
+              {onSendToComfyUI && (
+                <button
+                  onClick={() => onSendToComfyUI(item)}
+                  disabled={comfyUISubmitting}
+                  className="rounded bg-purple-600/20 px-2.5 py-1 text-xs font-medium text-purple-300 hover:bg-purple-600/30 transition-colors cursor-pointer border border-purple-600/40 disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="Send this prompt to ComfyUI (configure in Settings)"
+                >
+                  {comfyUISubmitting ? '⏳ Sending…' : '🚀 ComfyUI'}
+                </button>
+              )}
             </div>
           </div>
 
@@ -133,6 +144,21 @@ function PromptResults({ results, error, isGenerating, onCopy }) {
               ))}
             </div>
           </details>
+
+          {/* ComfyUI submission result */}
+          {comfyUIResult && comfyUIResult.index === index && (
+            <div className={`mt-3 rounded-md p-2.5 text-xs ${
+              comfyUIResult.success
+                ? 'bg-emerald-900/30 border border-emerald-700 text-emerald-300'
+                : 'bg-red-900/30 border border-red-700 text-red-300'
+            }`}>
+              <span className="font-medium">{comfyUIResult.success ? '✅' : '❌'}</span>{' '}
+              {comfyUIResult.message}
+              {comfyUIResult.promptId && (
+                <span className="ml-2 font-mono text-gray-400">ID: {comfyUIResult.promptId}</span>
+              )}
+            </div>
+          )}
         </div>
       ))}
     </div>

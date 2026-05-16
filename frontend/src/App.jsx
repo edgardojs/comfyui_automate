@@ -4,7 +4,8 @@ import PromptOptions from './components/PromptOptions'
 import PromptResults from './components/PromptResults'
 import PresetManager from './components/PresetManager'
 import PromptHistory from './components/PromptHistory'
-import { generatePrompts } from './api/client'
+import ComfyUISettings from './pages/ComfyUISettings'
+import { generatePrompts, submitToComfyUI } from './api/client'
 
 /**
  * App — Root component for the Sprite Prompt Generator.
@@ -37,6 +38,10 @@ function App() {
   // --- Toast state ---
   const [toast, setToast] = useState(null)
   const toastTimerRef = useRef(null)
+
+  // --- ComfyUI state ---
+  const [comfyUISubmitting, setComfyUISubmitting] = useState(false)
+  const [comfyUIResult, setComfyUIResult] = useState(null) // { index, success, message, promptId }
 
   useEffect(() => {
     return () => {
@@ -109,6 +114,75 @@ function App() {
       showToast(`${label} copied!`)
     }
   }, [showToast])
+
+  const handleSendToComfyUI = useCallback(async (item) => {
+    // Load settings from localStorage
+    let settings
+    try {
+      settings = JSON.parse(localStorage.getItem('comfyui_settings') || '{}')
+    } catch {
+      settings = {}
+    }
+
+    if (!settings.serverUrl || !settings.workflowJson || !settings.positiveNodeId) {
+      showToast('⚠️ Configure ComfyUI settings first (Settings page)')
+      return
+    }
+
+    let workflowObj
+    try {
+      workflowObj = typeof settings.workflowJson === 'string'
+        ? JSON.parse(settings.workflowJson)
+        : settings.workflowJson
+    } catch {
+      showToast('❌ Invalid workflow JSON in settings')
+      return
+    }
+
+    setComfyUISubmitting(true)
+    setComfyUIResult(null)
+
+    try {
+      const nodeMapping = {
+        positive_node_id: settings.positiveNodeId || '',
+        positive_input_name: settings.positiveInputName || 'text',
+        negative_node_id: settings.negativeNodeId || '',
+        negative_input_name: settings.negativeInputName || 'text',
+      }
+      if (settings.seedNodeId) {
+        nodeMapping.seed_node_id = settings.seedNodeId
+        nodeMapping.seed_input_name = settings.seedInputName || 'seed'
+      }
+
+      const result = await submitToComfyUI({
+        serverUrl: settings.serverUrl,
+        workflowJson: workflowObj,
+        positivePrompt: item.positive_prompt,
+        negativePrompt: item.negative_prompt,
+        nodeMapping,
+      })
+
+      const index = results?.items?.indexOf(item) ?? 0
+      setComfyUIResult({
+        index,
+        success: result.success,
+        message: result.message,
+        promptId: result.prompt_id,
+      })
+      showToast(result.success ? '🚀 Sent to ComfyUI!' : '❌ ComfyUI submission failed')
+    } catch (err) {
+      const index = results?.items?.indexOf(item) ?? 0
+      setComfyUIResult({
+        index,
+        success: false,
+        message: err.message || 'Failed to submit to ComfyUI',
+        promptId: null,
+      })
+      showToast('❌ ComfyUI error: ' + (err.message || 'Unknown error'))
+    } finally {
+      setComfyUISubmitting(false)
+    }
+  }, [showToast, results])
 
   const handleLoadPreset = useCallback(({ attributes: attrs, lockedFields: locks, templateId: tmpl, negativeProfileId: prof }) => {
     setAttributes(attrs)
@@ -187,6 +261,9 @@ function App() {
                 error={error}
                 isGenerating={isGenerating}
                 onCopy={handleCopy}
+                onSendToComfyUI={handleSendToComfyUI}
+                comfyUISubmitting={comfyUISubmitting}
+                comfyUIResult={comfyUIResult}
               />
             </section>
           </div>
@@ -211,13 +288,7 @@ function App() {
         )}
 
         {currentPage === 'settings' && (
-          <div className="rounded-lg border border-gray-800 bg-gray-900 p-8 text-center">
-            <span className="text-4xl">⚙️</span>
-            <h2 className="mt-4 text-lg font-semibold text-white">Settings</h2>
-            <p className="mt-2 text-sm text-gray-500">
-              ComfyUI connection and workflow configuration. Coming in Milestone 6.
-            </p>
-          </div>
+          <ComfyUISettings />
         )}
       </main>
 

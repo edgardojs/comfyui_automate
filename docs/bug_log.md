@@ -28,6 +28,24 @@
 | 12 | 2026-05-15 | `backend/app/db/database.py` | Info | `get_session()` is an async generator suitable for FastAPI `Depends()` but not yet wired up | Expected — will be connected when API routes are added (Milestone 3) |
 | 13 | 2026-05-15 | `backend/app/models/preset.py` | Info | `datetime` fields use `datetime | None` — Pydantic v2 handles this natively but serialization config may be needed later | Noted for future review when API responses are implemented |
 
+## Milestone 6.1 — ComfyUI Integration (Nunchaku Workflow Support)
+
+| # | Date | File | Severity | Bug | Fix Applied |
+|---|------|------|----------|-----|-------------|
+| 14 | 2026-05-16 | `backend/app/core/workflow_patcher.py` | Medium | `ui_to_api_workflow()` raised `ValueError` for API-format workflows instead of returning them unchanged | Changed to return API-format workflows as-is |
+| 15 | 2026-05-16 | `backend/app/core/workflow_patcher.py` | Medium | UI-format converter only used `widgets_values` for input values, ignoring `value` fields in input items | Added fallback to read `value` from unlinked input items |
+| 16 | 2026-05-16 | `backend/app/core/workflow_patcher.py` | Low | `extract_node_ids()` included PrimitiveNodes (not useful for prompt mapping) and didn't include node titles | Updated to skip PrimitiveNodes and include `title` field for UI-format nodes |
+| 17 | 2026-05-16 | `backend/app/api/comfyui.py` | Medium | Submit endpoint didn't auto-convert UI-format workflows before patching | Added auto-detection and conversion using `ui_to_api_workflow()` |
+| 18 | 2026-05-16 | `frontend/src/pages/ComfyUISettings.jsx` | Low | Info text only mentioned API format; node display didn't show titles | Updated to mention both formats are supported and display node titles |
+
+## Section 6.1 — ComfyUI Integration (Milestone 6)
+
+| # | Date | File | Severity | Bug | Fix Applied |
+|---|------|------|----------|-----|-------------|
+| 14 | 2026-05-16 | `backend/app/api/comfyui.py` | Info | ComfyUI API uses `httpx` for async HTTP — no ComfyUI dependency required, app works standalone | By design — ComfyUI features are opt-in |
+| 15 | 2026-05-16 | `frontend/src/pages/ComfyUISettings.jsx` | Info | Settings stored in localStorage — no backend persistence needed for MVP | By design — single-user local app |
+| 16 | 2026-05-16 | `frontend/src/components/PromptResults.jsx` | Info | "Send to ComfyUI" button only appears when `onSendToComfyUI` prop is provided | By design — button is conditionally rendered |
+
 ## Unit Tests — Post Section 3.4
 
 | # | Date | File | Severity | Bug | Fix Applied |
