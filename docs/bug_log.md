@@ -28,6 +28,33 @@
 | 12 | 2026-05-15 | `backend/app/db/database.py` | Info | `get_session()` is an async generator suitable for FastAPI `Depends()` but not yet wired up | Expected — will be connected when API routes are added (Milestone 3) |
 | 13 | 2026-05-15 | `backend/app/models/preset.py` | Info | `datetime` fields use `datetime | None` — Pydantic v2 handles this natively but serialization config may be needed later | Noted for future review when API responses are implemented |
 
+## Unit Tests — Post Section 3.4
+
+| # | Date | File | Severity | Bug | Fix Applied |
+|---|------|------|----------|-----|-------------|
+| 17 | 2026-05-15 | `backend/tests/test_api.py` | Medium | `pytest_asyncio` strict mode requires `@pytest_asyncio.fixture` for async fixtures — `@pytest.fixture` on async functions causes `PytestRemovedIn9Warning` and test errors | Changed to `@pytest_asyncio.fixture` for `setup_db` and `client` fixtures |
+| 18 | 2026-05-15 | `backend/tests/test_api.py` | Medium | `test_generate_with_attributes` failed — unlocked attributes are re-randomized by `generate_variations()`, so `classes: "rogue"` was overwritten with a random class | Added `locked_fields: ["classes", "species"]` to the test request to preserve specified attributes |
+
+## Static Analysis — Post Section 3.4
+
+| # | Date | File | Severity | Bug | Fix Applied |
+|---|------|------|----------|-----|-------------|
+| 19 | 2026-05-15 | `backend/tests/test_api.py` | Low | Unused `import json` — never referenced in the test file | Removed the unused import |
+
+## Fuzz Test — Post Section 3.4
+
+| # | Date | File | Severity | Bug | Fix Applied |
+|---|------|------|----------|-----|-------------|
+| 20 | 2026-05-15 | `backend/app/api/prompts.py` | High | `POST /api/prompts/generate` with invalid `template_id` or `negative_profile_id` raises unhandled `ValueError` → 500 Internal Server Error instead of 422 | Added `try/except ValueError` around `generate_prompt_variations()` call, returning HTTP 422 with the error message |
+
+## Static Analysis — Post Section 3.2
+
+| # | Date | File | Severity | Bug | Fix Applied |
+|---|------|------|----------|-----|-------------|
+| 14 | 2026-05-15 | `backend/app/api/presets.py` | Low | Unused imports: `datetime`, `timezone`, `PresetUpdate` | Removed all three unused imports |
+| 15 | 2026-05-15 | `backend/tests/fuzz_test.py` | Low | Unused variable `a` assigned from `Attribute(...)` in prompt_terms empty string test | Removed variable assignment — constructor call is the test |
+| 16 | 2026-05-15 | `backend/app/api/presets.py` | Medium | mypy reports `arg-type` errors in `_row_to_preset()` — SQLAlchemy ORM column descriptors appear as `Column[T]` to mypy but are `T` at runtime | Added `# type: ignore[arg-type]` comments (standard SQLAlchemy+mypy workaround) |
+
 ## Static Analysis — Post Section 1.3 (Frontend + Full Stack)
 
 | # | Date | File | Severity | Bug | Fix Applied |
@@ -51,6 +78,24 @@
 | # | Date | File | Severity | Bug | Fix Applied |
 |---|------|------|----------|-----|-------------|
 | 22 | 2026-05-15 | 6 files | Low | Missing final newline (W292) in `main.py`, `database.py`, `__init__.py`, `attribute.py`, `preset.py`, `prompt.py` | Added final newline to all files |
+
+## Static Code Review — Post Milestone 4 (Frontend)
+
+| # | Date | File | Severity | Bug | Fix Applied |
+|---|------|------|----------|-----|-------------|
+| 23 | 2026-05-15 | `frontend/src/App.jsx` | Medium | `handleRandomizeAll` and `handleClearAll` are identical — both clear attributes and locked fields. "Randomize All" should send a generate request with empty attributes (triggering random fill on the server), not just clear the UI | Changed `handleRandomizeAll` to clear attributes and then call `handleGenerate()` |
+| 24 | 2026-05-15 | `frontend/src/App.jsx` | Low | `handleCopy` uses deprecated `document.execCommand('copy')` as fallback — this API is deprecated and may not work in all browsers | Acceptable as progressive enhancement fallback; no fix needed for MVP |
+| 25 | 2026-05-15 | `frontend/src/components/PromptOptions.jsx` | Medium | Error in `fetchTemplates()` or `fetchNegativeProfiles()` is silently swallowed — if the API is unreachable, dropdowns will be empty with no indication to the user | Added error state with retry button |
+| 26 | 2026-05-15 | `frontend/src/components/PromptResults.jsx` | Low | Using `index` as `key` for variation cards — if the list order changes, React may not correctly reconcile. However, since variations are always generated in order and never reordered, this is acceptable | Noted — no fix needed for MVP |
+| 27 | 2026-05-15 | `frontend/src/components/AttributePanel.jsx` | Low | No retry mechanism when attribute fetch fails — user must reload the page | Added retry button in error state |
+| 28 | 2026-05-15 | `frontend/src/App.jsx` | Low | `showToast` timeout is not cleared when component unmounts — could cause state update on unmounted component | Added `useRef` for timeout ID and cleanup in `useEffect` |
+| 29 | 2026-05-15 | `frontend/src/pages/*.jsx` | Info | All 4 page components (`GeneratePage`, `PresetsPage`, `HistoryPage`, `SettingsPage`) are unused — `App.jsx` renders page content inline instead of using these components | Expected — pages will be used in Milestone 5 when they get real content |
+
+## Fuzz Test — Post Milestone 4 (Frontend)
+
+| # | Date | File | Severity | Bug | Fix Applied |
+|---|------|------|----------|-----|-------------|
+| 30 | 2026-05-15 | `backend/app/api/history.py` | Medium | `HistoryItem` Pydantic model missing `id` field — the database row has an auto-incrementing `id` column but it wasn't exposed in the API response. Frontend needs `id` to reference specific history items | Added `id: int` field to `HistoryItem` model and `id=row.id` to `_row_to_history_item()` helper |
 | 23 | 2026-05-15 | `backend/app/db/database.py` | Low | Line 35 exceeded 120-char limit (E501) — `updated_at` Column definition was 122 chars | Split `updated_at` Column across multiple lines |
 | 24 | 2026-05-15 | `backend/app/db/database.py` | Medium | `get_session()` async generator had incorrect return type annotation `AsyncSession` — mypy flagged it should be `AsyncGenerator` | Changed return type to `AsyncGenerator[AsyncSession, None]` |
 | 25 | 2026-05-15 | `backend/app/main.py` | Low | `lifespan()` parameter `app` shadowed outer scope and was unused (W0621, W0613) | Renamed to `_app` to indicate intentionally unused |
@@ -68,3 +113,13 @@
 | 32 | 2026-05-15 | `tests/test_prompt_engine.py` | Info | pylint E1101 false positives on Pydantic `FieldInfo` — `.get()` and `.startswith()` flagged as non-existent | Added `# pylint: disable=no-member` to test file |
 | 33 | 2026-05-15 | 2 test files | Info | pylint W0621 `redefined-outer-name` — pytest fixtures share names with test method params | Added `# pylint: disable=redefined-outer-name` to both test files |
 | 34 | 2026-05-15 | `backend/app/core/randomizer.py` | Info | bandit B311 `random.Random()` flagged as non-cryptographic | Added `# nosec B311` — random used for prompt variety, not security |
+
+## Static Code Review — Post Milestone 5 (Full Stack)
+
+| # | Date | File | Severity | Bug | Fix Applied |
+|---|------|------|----------|-----|-------------|
+| 35 | 2026-05-15 | `backend/app/api/history.py` | Medium | `list_history` counts total rows by fetching ALL IDs into Python with `select(PromptHistoryRow.id)` + `len(scalars().all())` — loads entire table into memory instead of using SQL `COUNT(*)` | Changed to `select(func.count()).select_from(PromptHistoryRow)` for efficient server-side count |
+| 36 | 2026-05-15 | `frontend/src/components/PresetManager.jsx` | Medium | Load/Delete action buttons use `opacity-0 group-hover:opacity-100` — invisible on touch/mobile devices with no hover state, making presets unmanageable | Added `opacity-100 lg:opacity-0 lg:group-hover:opacity-100` so buttons are always visible on small screens |
+| 37 | 2026-05-15 | `frontend/src/components/PromptHistory.jsx` | Low | `fetchHistory()` doesn't pass pagination params — backend defaults to 20 items with no "load more" UI, so users can only ever see the 20 most recent entries | Added `limit`/`offset` params to `fetchHistory()`, `offsetRef` + `loadingMore` state, and "Load More" button with remaining count |
+| 38 | 2026-05-15 | `frontend/src/components/PresetManager.jsx` | Low | `refreshPresets` silently catches errors — if the server goes down after a save/delete, the list won't update but the user gets no indication | Changed to show toast "Failed to refresh preset list" on error |
+| 39 | 2026-05-15 | `frontend/src/api/client.js` | Low | `fetchHistory()` and other API calls don't handle non-JSON error responses — `res.json()` could throw `SyntaxError` on malformed response body | Added `safeJson()` helper that catches JSON parse errors and throws a user-friendly message |

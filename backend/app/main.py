@@ -7,6 +7,9 @@ from typing import AsyncGenerator
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.history import router as history_router
+from app.api.presets import router as presets_router
+from app.api.prompts import router as prompts_router
 from app.db.database import init_db
 
 # CORS origins — configurable via CORS_ORIGINS env var (comma-separated)
@@ -37,6 +40,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Register API routers
+app.include_router(prompts_router)
+app.include_router(presets_router)
+app.include_router(history_router)
 
 
 @app.get("/api/health")

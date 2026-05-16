@@ -8,6 +8,20 @@
 const API_BASE = "/api";
 
 /**
+ * Safely parse a JSON response, handling non-JSON error bodies.
+ * @param {Response} res - Fetch Response object
+ * @returns {Promise<object>} Parsed JSON body
+ * @throws {Error} If response is not valid JSON
+ */
+async function safeJson(res) {
+  try {
+    return await res.json();
+  } catch {
+    throw new Error(`Unexpected response format (HTTP ${res.status})`);
+  }
+}
+
+/**
  * Fetch the full attribute library.
  * @param {string} [category] - Optional category filter (e.g. "classes")
  * @returns {Promise<object>} The attribute library or filtered category
@@ -18,7 +32,7 @@ export async function fetchAttributes(category) {
     : `${API_BASE}/attributes`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Failed to fetch attributes: ${res.status}`);
-  return res.json();
+  return safeJson(res);
 }
 
 /**
@@ -28,7 +42,7 @@ export async function fetchAttributes(category) {
 export async function fetchTemplates() {
   const res = await fetch(`${API_BASE}/templates`);
   if (!res.ok) throw new Error(`Failed to fetch templates: ${res.status}`);
-  return res.json();
+  return safeJson(res);
 }
 
 /**
@@ -38,7 +52,7 @@ export async function fetchTemplates() {
 export async function fetchNegativeProfiles() {
   const res = await fetch(`${API_BASE}/negative-profiles`);
   if (!res.ok) throw new Error(`Failed to fetch negative profiles: ${res.status}`);
-  return res.json();
+  return safeJson(res);
 }
 
 /**
@@ -70,7 +84,7 @@ export async function generatePrompts({
     }),
   });
   if (!res.ok) throw new Error(`Failed to generate prompts: ${res.status}`);
-  return res.json();
+  return safeJson(res);
 }
 
 /**
@@ -85,7 +99,7 @@ export async function savePreset(preset) {
     body: JSON.stringify(preset),
   });
   if (!res.ok) throw new Error(`Failed to save preset: ${res.status}`);
-  return res.json();
+  return safeJson(res);
 }
 
 /**
@@ -95,7 +109,7 @@ export async function savePreset(preset) {
 export async function fetchPresets() {
   const res = await fetch(`${API_BASE}/presets`);
   if (!res.ok) throw new Error(`Failed to fetch presets: ${res.status}`);
-  return res.json();
+  return safeJson(res);
 }
 
 /**
@@ -112,12 +126,20 @@ export async function deletePreset(presetId) {
 
 /**
  * Fetch prompt generation history.
- * @returns {Promise<object[]>} List of history items
+ * @param {object} [params] - Pagination parameters
+ * @param {number} [params.limit=20] - Max items to return
+ * @param {number} [params.offset=0] - Number of items to skip
+ * @returns {Promise<object>} Paginated history response with items and total
  */
-export async function fetchHistory() {
-  const res = await fetch(`${API_BASE}/history`);
+export async function fetchHistory({ limit = 20, offset = 0 } = {}) {
+  const params = new URLSearchParams();
+  if (limit !== 20) params.set('limit', String(limit));
+  if (offset !== 0) params.set('offset', String(offset));
+  const qs = params.toString();
+  const url = qs ? `${API_BASE}/history?${qs}` : `${API_BASE}/history`;
+  const res = await fetch(url);
   if (!res.ok) throw new Error(`Failed to fetch history: ${res.status}`);
-  return res.json();
+  return safeJson(res);
 }
 
 /**
@@ -130,7 +152,7 @@ export async function favoriteHistoryItem(id) {
     method: "POST",
   });
   if (!res.ok) throw new Error(`Failed to favorite history item: ${res.status}`);
-  return res.json();
+  return safeJson(res);
 }
 
 /**
@@ -140,5 +162,5 @@ export async function favoriteHistoryItem(id) {
 export async function healthCheck() {
   const res = await fetch(`${API_BASE}/health`);
   if (!res.ok) throw new Error(`Health check failed: ${res.status}`);
-  return res.json();
+  return safeJson(res);
 }

@@ -115,7 +115,7 @@ def fuzz_attribute_model():
 
     # prompt_terms with empty strings
     try:
-        a = Attribute(id="x", category="x", label="x", prompt_terms=["", "valid"])
+        Attribute(id="x", category="x", label="x", prompt_terms=["", "valid"])
         # This is allowed — individual terms can be empty strings
         # (no validator prevents it, which is a design choice)
     except ValidationError:
@@ -526,6 +526,346 @@ def fuzz_data_integrity():
 
 
 # ---------------------------------------------------------------------------
+# 5. API Endpoint Fuzzing
+# ---------------------------------------------------------------------------
+
+def fuzz_api_endpoints():
+    """Fuzz test the REST API endpoints via HTTP client."""
+    print("\n--- Fuzzing API Endpoints ---")
+
+    import asyncio
+
+    from httpx import ASGITransport, AsyncClient
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+    from app.db.database import Base, get_session
+    from app.main import app
+
+    # Set up in-memory test DB
+    test_db_url = "sqlite+aiosqlite:///:memory:"
+    test_engine = create_async_engine(test_db_url, echo=False, connect_args={"check_same_thread": False})
+    test_session_factory = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
+
+    async def _override_session():
+        async with test_session_factory() as session:
+            yield session
+
+    app.dependency_overrides[get_session] = _override_session
+
+    async def _run_tests():
+        # Create tables
+        async with test_engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            # --- POST /api/prompts/generate ---
+            # Valid baseline
+            resp = await client.post("/api/prompts/generate", json={})
+            if resp.status_code != 200:
+                report("HIGH", f"POST /api/prompts/generate with empty body returns {resp.status_code}")
+
+            # Malformed JSON body
+            resp = await client.post(
+                "/api/prompts/generate",
+                content="not json",
+                headers={"Content-Type": "application/json"},
+            )
+            if resp.status_code != 422:
+                report("MEDIUM", f"POST /api/prompts/generate accepts malformed JSON: {resp.status_code}")
+
+            # variation_count boundaries
+            for bad_count in [0, -1, 51, 100, 999999]:
+                resp = await client.post("/api/prompts/generate", json={"variation_count": bad_count})
+                if resp.status_code != 422:
+                    report("MEDIUM", f"POST /api/prompts/generate accepts variation_count={bad_count}")
+
+            # attributes with wrong types
+            resp = await client.post("/api/prompts/generate", json={"attributes": "not_a_dict"})
+            if resp.status_code != 422:
+                report("MEDIUM", f"POST /api/prompts/generate accepts attributes as string: {resp.status_code}")
+
+            # attributes with numeric values
+            resp = await client.post("/api/prompts/generate", json={"attributes": {"classes": 123}})
+            if resp.status_code != 422:
+                report("LOW", f"POST /api/prompts/generate accepts numeric attribute value: {resp.status_code}")
+
+            # locked_fields with wrong type
+            resp = await client.post("/api/prompts/generate", json={"locked_fields": "not_a_list"})
+            if resp.status_code != 422:
+                report("MEDIUM", f"POST /api/prompts/generate accepts locked_fields as string: {resp.status_code}")
+
+            # Nonexistent template_id
+            resp = await client.post("/api/prompts/generate", json={"template_id": "fake_template"})
+            if resp.status_code not in (400, 422):
+                report("MEDIUM", f"POST /api/prompts/generate with fake template_id returns {resp.status_code}, expected 422")
+
+            # Nonexistent negative_profile_id
+            resp = await client.post("/api/prompts/generate", json={"negative_profile_id": "fake_profile"})
+            if resp.status_code not in (400, 422):
+                report("MEDIUM", f"POST /api/prompts/generate with fake negative_profile_id returns {resp.status_code}, expected 422")
+
+            # Extra fields in body
+            resp = await client.post("/api/prompts/generate", json={"extra_field": "unexpected", "variation_count": 1})
+            # Pydantic v2 ignores extra fields by default — this is acceptable
+            if resp.status_code not in (200, 422):
+                report("LOW", f"POST /api/prompts/generate with extra fields returns {resp.status_code}")
+
+            # Very large attributes dict
+            big_attrs = {f"cat_{i}": f"val_{i}" for i in range(1000)}
+            resp = await client.post("/api/prompts/generate", json={"attributes": big_attrs})
+            if resp.status_code not in (200, 422):
+                report("LOW", f"POST /api/prompts/generate with 1000 attributes returns {resp.status_code}")
+
+            # Attributes with special characters
+            special_attrs = {"classes": "<script>alert(1)</script>", "species": "'; DROP TABLE presets; --"}
+            resp = await client.post("/api/prompts/generate", json={"attributes": special_attrs})
+            if resp.status_code not in (200, 422):
+                report("LOW", f"POST /api/prompts/generate with special chars returns {resp.status_code}")
+
+            # --- GET /api/attributes ---
+            resp = await client.get("/api/attributes")
+            if resp.status_code != 200:
+                report("HIGH", f"GET /api/attributes returns {resp.status_code}")
+            data = resp.json()
+            if len(data.get("categories", [])) != 11:
+                report("MEDIUM", f"GET /api/attributes returns {len(data.get('categories', []))} categories, expected 11")
+
+            # Category filter with special characters
+            resp = await client.get("/api/attributes?category=<script>")
+            if resp.status_code != 200:
+                report("LOW", f"GET /api/attributes with script tag filter returns {resp.status_code}")
+
+            # Category filter with very long string
+            resp = await client.get(f"/api/attributes?category={'a' * 1000}")
+            if resp.status_code != 200:
+                report("LOW", f"GET /api/attributes with 1000-char filter returns {resp.status_code}")
+
+            # --- GET /api/templates ---
+            resp = await client.get("/api/templates")
+            if resp.status_code != 200:
+                report("HIGH", f"GET /api/templates returns {resp.status_code}")
+            data = resp.json()
+            if len(data.get("templates", [])) != 6:
+                report("MEDIUM", f"GET /api/templates returns {len(data.get('templates', []))} templates, expected 6")
+
+            # --- GET /api/negative-profiles ---
+            resp = await client.get("/api/negative-profiles")
+            if resp.status_code != 200:
+                report("HIGH", f"GET /api/negative-profiles returns {resp.status_code}")
+            data = resp.json()
+            if len(data.get("profiles", [])) != 4:
+                report("MEDIUM", f"GET /api/negative-profiles returns {len(data.get('profiles', []))} profiles, expected 4")
+
+            # --- POST /api/presets ---
+            # Valid baseline
+            resp = await client.post("/api/presets", json={"name": "Fuzz Preset"})
+            if resp.status_code != 201:
+                report("HIGH", f"POST /api/presets with valid body returns {resp.status_code}")
+
+            # Empty name
+            resp = await client.post("/api/presets", json={"name": ""})
+            if resp.status_code != 422:
+                report("MEDIUM", f"POST /api/presets accepts empty name: {resp.status_code}")
+
+            # Whitespace-only name
+            resp = await client.post("/api/presets", json={"name": "   \t\n   "})
+            if resp.status_code != 422:
+                report("MEDIUM", f"POST /api/presets accepts whitespace-only name: {resp.status_code}")
+
+            # Missing name field
+            resp = await client.post("/api/presets", json={})
+            if resp.status_code != 422:
+                report("MEDIUM", f"POST /api/presets accepts missing name: {resp.status_code}")
+
+            # Extra fields (PresetCreate forbids extras)
+            resp = await client.post("/api/presets", json={"name": "Test", "extra": "field"})
+            if resp.status_code != 422:
+                report("MEDIUM", f"POST /api/presets accepts extra fields: {resp.status_code}")
+
+            # Very long name
+            resp = await client.post("/api/presets", json={"name": "x" * 10000})
+            if resp.status_code == 201:
+                report("LOW", "POST /api/presets accepts 10000-char name (no max_length enforced at API level)")
+
+            # Name with special characters
+            resp = await client.post("/api/presets", json={"name": "<script>alert(1)</script>"})
+            if resp.status_code != 201:
+                report("LOW", f"POST /api/presets rejects HTML in name: {resp.status_code}")
+
+            # --- GET /api/presets ---
+            resp = await client.get("/api/presets")
+            if resp.status_code != 200:
+                report("HIGH", f"GET /api/presets returns {resp.status_code}")
+
+            # --- GET /api/presets/{preset_id} ---
+            # Nonexistent preset
+            resp = await client.get("/api/presets/preset_nonexistent")
+            if resp.status_code != 404:
+                report("MEDIUM", f"GET /api/presets/nonexistent returns {resp.status_code}, expected 404")
+
+            # Preset ID with special characters
+            resp = await client.get("/api/presets/<script>alert(1)</script>")
+            if resp.status_code not in (404, 422):
+                report("LOW", f"GET /api/presets with script tag ID returns {resp.status_code}")
+
+            # --- DELETE /api/presets/{preset_id} ---
+            resp = await client.delete("/api/presets/preset_nonexistent")
+            if resp.status_code != 404:
+                report("MEDIUM", f"DELETE /api/presets/nonexistent returns {resp.status_code}, expected 404")
+
+            # --- GET /api/history ---
+            resp = await client.get("/api/history")
+            if resp.status_code != 200:
+                report("HIGH", f"GET /api/history returns {resp.status_code}")
+
+            # Invalid pagination
+            for bad_limit in [0, -1, 101, 999999]:
+                resp = await client.get(f"/api/history?limit={bad_limit}")
+                if resp.status_code != 422:
+                    report("MEDIUM", f"GET /api/history accepts limit={bad_limit}")
+
+            for bad_offset in [-1, -100]:
+                resp = await client.get(f"/api/history?offset={bad_offset}")
+                if resp.status_code != 422:
+                    report("MEDIUM", f"GET /api/history accepts offset={bad_offset}")
+
+            # --- POST /api/history/{id}/favorite ---
+            resp = await client.post("/api/history/gen_nonexistent/favorite")
+            if resp.status_code != 404:
+                report("MEDIUM", f"POST /api/history/nonexistent/favorite returns {resp.status_code}, expected 404")
+
+            # Favorite with special characters in ID
+            resp = await client.post("/api/history/<script>/favorite")
+            if resp.status_code not in (404, 422):
+                report("LOW", f"POST /api/history with script tag ID returns {resp.status_code}")
+
+            # --- Health check ---
+            resp = await client.get("/api/health")
+            if resp.status_code != 200:
+                report("HIGH", f"GET /api/health returns {resp.status_code}")
+            data = resp.json()
+            if data.get("status") != "ok":
+                report("MEDIUM", f"GET /api/health returns unexpected status: {data}")
+
+        # Clean up
+        async with test_engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
+        app.dependency_overrides.clear()
+
+    asyncio.run(_run_tests())
+
+
+# ---------------------------------------------------------------------------
+# 6. API Integration Fuzzing
+# ---------------------------------------------------------------------------
+
+def fuzz_api_integration():
+    """Fuzz test API integration: generate → history → favorite flow."""
+    print("\n--- Fuzzing API Integration Flow ---")
+
+    import asyncio
+
+    from httpx import ASGITransport, AsyncClient
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+    from app.db.database import Base, get_session
+    from app.main import app
+
+    test_db_url = "sqlite+aiosqlite:///:memory:"
+    test_engine = create_async_engine(test_db_url, echo=False, connect_args={"check_same_thread": False})
+    test_session_factory = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
+
+    async def _override_session():
+        async with test_session_factory() as session:
+            yield session
+
+    app.dependency_overrides[get_session] = _override_session
+
+    async def _run_tests():
+        async with test_engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            # Generate multiple prompts and verify they all appear in history
+            gen_ids = []
+            for _ in range(5):
+                resp = await client.post("/api/prompts/generate", json={"variation_count": 1})
+                if resp.status_code != 200:
+                    report("HIGH", f"Generate in integration flow returns {resp.status_code}")
+                    continue
+                gen_ids.append(resp.json()["generation_id"])
+
+            # Check history has all entries
+            resp = await client.get("/api/history")
+            if resp.status_code != 200:
+                report("HIGH", f"GET /api/history in integration returns {resp.status_code}")
+            else:
+                data = resp.json()
+                if data["total"] < len(gen_ids):
+                    report("MEDIUM", f"History has {data['total']} entries, expected at least {len(gen_ids)}")
+                hist_ids = {item["generation_id"] for item in data["items"]}
+                for gid in gen_ids:
+                    if gid not in hist_ids:
+                        report("MEDIUM", f"Generation {gid} not found in history")
+
+            # Toggle favorites on all entries
+            for gid in gen_ids:
+                resp = await client.post(f"/api/history/{gid}/favorite")
+                if resp.status_code != 200:
+                    report("MEDIUM", f"Favorite toggle for {gid} returns {resp.status_code}")
+                elif not resp.json()["is_favorite"]:
+                    report("MEDIUM", f"Favorite toggle for {gid} didn't set is_favorite=True")
+
+            # Toggle favorites off
+            for gid in gen_ids:
+                resp = await client.post(f"/api/history/{gid}/favorite")
+                if resp.status_code != 200:
+                    report("MEDIUM", f"Favorite toggle off for {gid} returns {resp.status_code}")
+                elif resp.json()["is_favorite"]:
+                    report("MEDIUM", f"Favorite toggle off for {gid} didn't set is_favorite=False")
+
+            # Create preset, then retrieve it
+            resp = await client.post("/api/presets", json={
+                "name": "Integration Preset",
+                "attributes": {"classes": "rogue"},
+                "locked_fields": ["classes"],
+            })
+            if resp.status_code != 201:
+                report("HIGH", f"Create preset in integration returns {resp.status_code}")
+            else:
+                preset_id = resp.json()["preset_id"]
+                resp = await client.get(f"/api/presets/{preset_id}")
+                if resp.status_code != 200:
+                    report("MEDIUM", f"Get preset after create returns {resp.status_code}")
+                elif resp.json()["attributes"]["classes"] != "rogue":
+                    report("MEDIUM", "Preset attributes not preserved after round-trip")
+
+            # Delete the preset and verify 404
+            resp = await client.delete(f"/api/presets/{preset_id}")
+            if resp.status_code != 204:
+                report("MEDIUM", f"Delete preset returns {resp.status_code}, expected 204")
+            resp = await client.get(f"/api/presets/{preset_id}")
+            if resp.status_code != 404:
+                report("MEDIUM", f"Get deleted preset returns {resp.status_code}, expected 404")
+
+            # Stress test: rapid generate + history reads
+            try:
+                for _ in range(10):
+                    await client.post("/api/prompts/generate", json={})
+                    await client.get("/api/history?limit=5")
+            except Exception as e:
+                report("MEDIUM", f"Stress test (generate + history) raises {type(e).__name__}: {e}")
+
+        async with test_engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
+        app.dependency_overrides.clear()
+
+    asyncio.run(_run_tests())
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -540,6 +880,8 @@ if __name__ == "__main__":
     fuzz_randomizer()
     fuzz_prompt_engine()
     fuzz_data_integrity()
+    fuzz_api_endpoints()
+    fuzz_api_integration()
 
     print("\n" + "=" * 60)
     print(f"FUZZ TEST COMPLETE — {len(issues)} issues found")

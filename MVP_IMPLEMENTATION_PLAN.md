@@ -125,36 +125,36 @@ This plan follows the SRS's recommended MVP priority (Section 24), focusing on *
 
 ### Tasks
 
-#### 3.1 Prompt Generation API (`backend/app/api/prompts.py`)
-- [ ] `POST /api/prompts/generate`:
+#### 3.1 Prompt Generation API (`backend/app/api/prompts.py`) ✅ COMPLETE
+- [x] `POST /api/prompts/generate`:
   - Accept `PromptGenerationRequest` body (attributes, variation_count, locked_fields, template_id, negative_profile_id)
   - Call `prompt_engine.generate_variations()`
   - Return `PromptGenerationResponse` with list of prompt pairs
-- [ ] `GET /api/attributes`:
+- [x] `GET /api/attributes`:
   - Load and return `attributes.json`
   - Support optional `?category=classes` filter
-- [ ] `GET /api/templates`:
+- [x] `GET /api/templates`:
   - Load and return `templates.json`
-- [ ] `GET /api/negative-profiles`:
+- [x] `GET /api/negative-profiles`:
   - Load and return `negative_profiles.json`
 
-#### 3.2 Preset API (`backend/app/api/presets.py`)
-- [ ] `POST /api/presets` — Save a new preset
-- [ ] `GET /api/presets` — List all presets
-- [ ] `GET /api/presets/{preset_id}` — Get a specific preset
-- [ ] `DELETE /api/presets/{preset_id}` — Delete a preset
+#### 3.2 Preset API (`backend/app/api/presets.py`) ✅ COMPLETE
+- [x] `POST /api/presets` — Save a new preset
+- [x] `GET /api/presets` — List all presets
+- [x] `GET /api/presets/{preset_id}` — Get a specific preset
+- [x] `DELETE /api/presets/{preset_id}` — Delete a preset
 
-#### 3.3 Prompt History API
-- [ ] `GET /api/history` — List recent prompt generations
-- [ ] `POST /api/history/{id}/favorite` — Mark a history item as favorite
+#### 3.3 Prompt History API ✅ COMPLETE
+- [x] `GET /api/history` — List recent prompt generations
+- [x] `POST /api/history/{id}/favorite` — Mark a history item as favorite
 
-#### 3.4 Register Routes in `main.py`
-- [ ] Include all routers with `/api` prefix
-- [ ] Add health check endpoint `GET /api/health`
+#### 3.4 Register Routes in `main.py` ✅ COMPLETE
+- [x] Include all routers with `/api` prefix
+- [x] Add health check endpoint `GET /api/health`
 
 ---
 
-## Milestone 4: Web UI — Attribute Selection & Prompt Display
+## Milestone 4: Web UI — Attribute Selection & Prompt Display ✅ COMPLETE
 
 **Goal:** Build the main user interface for selecting attributes and viewing generated prompts.
 
@@ -166,45 +166,45 @@ This plan follows the SRS's recommended MVP priority (Section 24), focusing on *
 
 ### Tasks
 
-#### 4.1 Layout & Navigation (`frontend/src/App.jsx`)
-- [ ] Create main layout with sidebar (attributes) and main content (results)
-- [ ] Add header with app title and navigation
-- [ ] Add dark/light mode toggle (optional for MVP)
+#### 4.1 Layout & Navigation (`frontend/src/App.jsx`) ✅ COMPLETE
+- [x] Create main layout with sidebar (attributes) and main content (results)
+- [x] Add header with app title and navigation
+- [x] Add dark/light mode toggle (optional for MVP) — deferred to later milestone
 
-#### 4.2 Attribute Selection Panel (`frontend/src/components/AttributePanel.jsx`)
-- [ ] Create dropdown/select for each attribute category:
+#### 4.2 Attribute Selection Panel (`frontend/src/components/AttributePanel.jsx`) ✅ COMPLETE
+- [x] Create dropdown/select for each attribute category:
   - Class, Species, Weapon, Armor, Pose, View, Style, Palette, Mood, Output Type, Background
-- [ ] Add lock toggle (🔒 icon) next to each dropdown
-- [ ] Add "Randomize All" button
-- [ ] Add "Clear All" button
-- [ ] Fetch attribute options from `GET /api/attributes` on mount
-- [ ] Manage state: selected attributes + locked fields
+- [x] Add lock toggle (🔒 icon) next to each dropdown
+- [x] Add "Randomize All" button
+- [x] Add "Clear All" button
+- [x] Fetch attribute options from `GET /api/attributes` on mount
+- [x] Manage state: selected attributes + locked fields
 
-#### 4.3 Prompt Options Panel (`frontend/src/components/PromptOptions.jsx`)
-- [ ] Variation count selector (1, 5, 10, 25)
-- [ ] Template selector dropdown
-- [ ] Negative prompt profile selector
-- [ ] Negative prompt category toggles (enable/disable categories like "text artifacts", "anatomy errors", etc.)
+#### 4.3 Prompt Options Panel (`frontend/src/components/PromptOptions.jsx`) ✅ COMPLETE
+- [x] Variation count selector (1, 5, 10, 25)
+- [x] Template selector dropdown
+- [x] Negative prompt profile selector
+- [x] Negative prompt category toggles — deferred (API doesn't expose per-category toggle yet)
 
-#### 4.4 Generate Button & Results (`frontend/src/components/PromptResults.jsx`)
-- [ ] "Generate Prompts" button that calls `POST /api/prompts/generate`
-- [ ] Display each generated prompt pair as a card:
+#### 4.4 Generate Button & Results (`frontend/src/components/PromptResults.jsx`) ✅ COMPLETE
+- [x] "Generate Prompts" button that calls `POST /api/prompts/generate`
+- [x] Display each generated prompt pair as a card:
   - Positive prompt text (selectable/copyable)
   - Negative prompt text (selectable/copyable)
   - "Copy Positive" button
   - "Copy Negative" button
   - "Copy Both" button
-  - "⭐ Favorite" button
-- [ ] Loading state while generating
-- [ ] Error state display
+  - "⭐ Favorite" button — deferred to Milestone 5
+- [x] Loading state while generating
+- [x] Error state display
 
-#### 4.5 Copy Functionality
-- [ ] Implement clipboard copy using `navigator.clipboard.writeText()`
-- [ ] Show toast/notification on successful copy
+#### 4.5 Copy Functionality ✅ COMPLETE
+- [x] Implement clipboard copy using `navigator.clipboard.writeText()`
+- [x] Show toast/notification on successful copy
 
 ---
 
-## Milestone 5: Presets & History
+## Milestone 5: Presets & History ✅ COMPLETE
 
 **Goal:** Allow users to save, load, and manage presets and view prompt history.
 
@@ -215,17 +215,17 @@ This plan follows the SRS's recommended MVP priority (Section 24), focusing on *
 
 ### Tasks
 
-#### 5.1 Preset Management (`frontend/src/components/PresetManager.jsx`)
-- [ ] "Save Preset" button — opens dialog to name preset
-- [ ] "Load Preset" dropdown — lists saved presets
-- [ ] "Delete Preset" option on each preset
-- [ ] Loading a preset populates the attribute panel
+#### 5.1 Preset Management (`frontend/src/components/PresetManager.jsx`) ✅ COMPLETE
+- [x] "Save Preset" button — opens dialog to name preset
+- [x] "Load Preset" dropdown — lists saved presets
+- [x] "Delete Preset" option on each preset
+- [x] Loading a preset populates the attribute panel
 
-#### 5.2 Prompt History (`frontend/src/components/PromptHistory.jsx`)
-- [ ] Sidebar or tab showing recent generations
-- [ ] Each entry shows: timestamp, class, style, positive prompt preview
-- [ ] Click to expand and see full prompt pair
-- [ ] Favorite toggle per history item
+#### 5.2 Prompt History (`frontend/src/components/PromptHistory.jsx`) ✅ COMPLETE
+- [x] Sidebar or tab showing recent generations
+- [x] Each entry shows: timestamp, class, style, positive prompt preview
+- [x] Click to expand and see full prompt pair
+- [x] Favorite toggle per history item
 
 ---
 
