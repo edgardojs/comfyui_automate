@@ -29,7 +29,7 @@ This means the module works even when ComfyUI is not running — you can create 
 ### Tasks
 
 #### 7.1 Character Profile Models (`backend/app/models/character.py`)
-- [ ] Create `CharacterProfile` Pydantic model:
+- [x] Create `CharacterProfile` Pydantic model:
   - `character_id` (auto-generated UUID)
   - `project_name` (str)
   - `character_name` (str)
@@ -45,7 +45,7 @@ This means the module works even when ComfyUI is not running — you can create 
   - `trigger_token` (str, auto-generated unique token)
   - `created_at` (datetime)
   - `updated_at` (datetime)
-- [ ] Create `ReferenceImage` Pydantic model:
+- [x] Create `ReferenceImage` Pydantic model:
   - `image_id` (auto-generated UUID)
   - `character_id` (FK to character profile)
   - `file_path` (str, path to stored image)
@@ -57,7 +57,7 @@ This means the module works even when ComfyUI is not running — you can create 
   - `created_at` (datetime)
 
 #### 7.2 Character Profile Database (`backend/app/db/database.py`)
-- [ ] Add `character_profiles` table to SQLAlchemy models:
+- [x] Add `character_profiles` table to SQLAlchemy models:
   - `id` (Integer, PK, autoincrement)
   - `character_id` (String, unique, indexed)
   - `project_name` (String)
@@ -74,7 +74,7 @@ This means the module works even when ComfyUI is not running — you can create 
   - `trigger_token` (String, unique)
   - `created_at` (DateTime)
   - `updated_at` (DateTime)
-- [ ] Add `reference_images` table:
+- [x] Add `reference_images` table:
   - `id` (Integer, PK, autoincrement)
   - `image_id` (String, unique, indexed)
   - `character_id` (String, FK to character_profiles)
@@ -85,7 +85,7 @@ This means the module works even when ComfyUI is not running — you can create 
   - `caption` (String, nullable)
   - `rejection_reason` (String, nullable)
   - `created_at` (DateTime)
-- [ ] Add `lora_jobs` table (for Milestone 8):
+- [x] Add `lora_jobs` table (for Milestone 8):
   - `id` (Integer, PK, autoincrement)
   - `job_id` (String, unique, indexed)
   - `character_id` (String, FK to character_profiles)
@@ -99,7 +99,7 @@ This means the module works even when ComfyUI is not running — you can create 
   - `updated_at` (DateTime)
 
 #### 7.3 File Storage Setup
-- [ ] Create `backend/app/core/storage.py` — File storage utility:
+- [x] Create `backend/app/core/storage.py` — File storage utility:
   - `get_project_dir(project_name)` → returns path to `/sprite_projects/{project_name}/`
   - `get_character_dir(project_name, character_name)` → returns path to character folder
   - `get_references_dir(project_name, character_name)` → returns path to `references/`
@@ -108,34 +108,34 @@ This means the module works even when ComfyUI is not running — you can create 
   - `get_previews_dir(project_name, character_name)` → returns path to `previews/`
   - `save_reference_image(character_id, file)` → saves uploaded image, returns path
   - All directories auto-created on first access
-- [ ] Configure storage root via `SPRITE_PROJECTS_DIR` env var (default: `./sprite_projects`)
+- [x] Configure storage root via `SPRITE_PROJECTS_DIR` env var (default: `./sprite_projects`)
 
 #### 7.4 Character Profile API (`backend/app/api/characters.py`)
-- [ ] `POST /api/characters` — Create a new character profile
+- [x] `POST /api/characters` — Create a new character profile
   - Auto-generates trigger token: `{project}_{character}_{style}_v1` (sanitized)
   - Creates character directory structure
   - Returns `CharacterProfile` with trigger token
-- [ ] `GET /api/characters` — List all character profiles
+- [x] `GET /api/characters` — List all character profiles
   - Optional `?project_name=` filter
-- [ ] `GET /api/characters/{character_id}` — Get a specific character profile
-- [ ] `PUT /api/characters/{character_id}` — Update a character profile
-- [ ] `DELETE /api/characters/{character_id}` — Delete a character profile and its files
+- [x] `GET /api/characters/{character_id}` — Get a specific character profile
+- [x] `PUT /api/characters/{character_id}` — Update a character profile
+- [x] `DELETE /api/characters/{character_id}` — Delete a character profile and its files
 
 #### 7.5 Reference Image API (`backend/app/api/references.py`)
-- [ ] `POST /api/characters/{character_id}/references` — Upload reference images
+- [x] `POST /api/characters/{character_id}/references` — Upload reference images
   - Accept multipart form data (multiple files)
   - Validate file types (PNG, JPG, WEBP)
   - Save to character's `references/` directory
   - Return list of created `ReferenceImage` records
-- [ ] `GET /api/characters/{character_id}/references` — List reference images
+- [x] `GET /api/characters/{character_id}/references` — List reference images
   - Optional `?status=` filter (accepted, rejected, maybe, pending)
-- [ ] `PATCH /api/characters/{character_id}/references/{image_id}` — Update image status
+- [x] `PATCH /api/characters/{character_id}/references/{image_id}` — Update image status
   - Accept body: `{ "status": "accepted", "angle": "front", "rejection_reason": "..." }`
-- [ ] `DELETE /api/characters/{character_id}/references/{image_id}` — Delete a reference image
-- [ ] `GET /api/characters/{character_id}/references/{image_id}/file` — Serve the image file
+- [x] `DELETE /api/characters/{character_id}/references/{image_id}` — Delete a reference image
+- [x] `GET /api/characters/{character_id}/references/{image_id}/file` — Serve the image file
 
 #### 7.6 Dataset Quality Validation (`backend/app/core/dataset_validator.py`)
-- [ ] Implement `validate_dataset(character_id)`:
+- [x] Implement `validate_dataset(character_id)`:
   - Count images by status (accepted, rejected, etc.)
   - Warn if fewer than 15 accepted images
   - Warn if no front-view images
@@ -143,25 +143,25 @@ This means the module works even when ComfyUI is not running — you can create 
   - Warn if no back-view images
   - Warn if inconsistent weapons across accepted images (future: image analysis)
   - Return `DatasetValidationResult` with warnings list
-- [ ] `GET /api/characters/{character_id}/dataset-validation` — Run validation and return warnings
+- [x] `GET /api/characters/{character_id}/dataset-validation` — Run validation and return warnings
 
 #### 7.7 Frontend: Character Profile Page (`frontend/src/pages/CharactersPage.jsx`)
-- [ ] Create character list view with project grouping
-- [ ] Create "New Character" dialog with form fields:
+- [x] Create character list view with project grouping
+- [x] Create "New Character" dialog with form fields:
   - Project name, character name, species, class, weapon, armor
   - Art style, target sprite size, target perspectives, animations
   - Auto-generated trigger token (editable)
-- [ ] Character detail view showing profile info and trigger token
-- [ ] Edit and delete character actions
+- [x] Character detail view showing profile info and trigger token
+- [x] Edit and delete character actions
 
 #### 7.8 Frontend: Reference Image Manager (`frontend/src/components/ReferenceManager.jsx`)
-- [ ] Upload area (drag-and-drop + file picker)
-- [ ] Image grid with thumbnails
-- [ ] Status badges (accepted ✅, rejected ❌, maybe 🟡, pending ⬜)
-- [ ] Click to change status (accept/reject/maybe)
-- [ ] Angle selector per image (front/side/back/three-quarter)
-- [ ] Dataset quality warnings panel
-- [ ] "Generate Captions" button (placeholder for Milestone 8)
+- [x] Upload area (drag-and-drop + file picker)
+- [x] Image grid with thumbnails
+- [x] Status badges (accepted ✅, rejected ❌, maybe 🟡, pending ⬜)
+- [x] Click to change status (accept/reject/maybe)
+- [x] Angle selector per image (front/side/back/three-quarter)
+- [x] Dataset quality warnings panel
+- [x] "Generate Captions" button (placeholder for Milestone 8)
 
 ---
 
@@ -179,20 +179,20 @@ This means the module works even when ComfyUI is not running — you can create 
 ### Tasks
 
 #### 8.1 Caption Generator (`backend/app/core/caption_generator.py`)
-- [ ] Implement `generate_caption(character_profile, reference_image)`:
+- [x] Implement `generate_caption(character_profile, reference_image)`:
   - Build caption from character profile fields + trigger token
   - Format: `{trigger_token}, {species} {class}, {weapon}, {armor}, {angle}, full body, {art_style}, clean silhouette`
-  - Example: `dwarf_rogue_archer_edgardo_v1, dwarf rogue archer, shortbow, studded leather armor, front view, full body, pixel art sprite style, clean silhouette`
-- [ ] Implement `generate_captions_for_character(character_id)`:
+  - Example: `dwarf_rogue_archer_v1, dwarf rogue, shortbow, studded leather armor, front view, full body, pixel art sprite style, clean silhouette`
+- [x] Implement `generate_captions_for_character(character_id)`:
   - Generate captions for all accepted reference images
   - Return list of `{image_id, caption}` pairs
-- [ ] Implement `generate_trigger_token(project_name, character_name, style)`:
+- [x] Implement `generate_trigger_token(project_name, character_name, style)`:
   - Sanitize inputs (lowercase, replace spaces with underscores)
   - Format: `{project}_{character}_{style}_v1`
   - Ensure uniqueness by checking database
 
 #### 8.2 Training Presets (`backend/app/data/training_presets.json`)
-- [ ] Create training preset definitions:
+- [x] Create training preset definitions:
   ```json
   {
     "presets": [
@@ -261,12 +261,12 @@ This means the module works even when ComfyUI is not running — you can create 
   ```
 
 #### 8.3 Caption API (`backend/app/api/characters.py` — extend)
-- [ ] `POST /api/characters/{character_id}/generate-captions` — Auto-generate captions for all accepted images
-- [ ] `PUT /api/characters/{character_id}/references/{image_id}/caption` — Edit a specific caption
-- [ ] `GET /api/training-presets` — List available training presets
+- [x] `POST /api/characters/{character_id}/generate-captions` — Auto-generate captions for all accepted images
+- [x] `PUT /api/characters/{character_id}/references/{image_id}/caption` — Edit a specific caption
+- [x] `GET /api/training-presets` — List available training presets
 
 #### 8.4 LoRA Training Configuration Models (`backend/app/models/lora.py`)
-- [ ] Create `LoRATrainingConfig` Pydantic model:
+- [x] Create `LoRATrainingConfig` Pydantic model:
   - `character_id` (str)
   - `preset_id` (str, optional)
   - `base_model` (str, path to checkpoint)
@@ -276,7 +276,7 @@ This means the module works even when ComfyUI is not running — you can create 
   - `output_format` (str, default "safetensors")
   - `lora_strength` (float, default 1.0)
   - `custom_args` (dict, optional — for advanced users)
-- [ ] Create `LoRAJob` Pydantic model:
+- [x] Create `LoRAJob` Pydantic model:
   - `job_id` (str, auto-generated)
   - `character_id` (str)
   - `config` (LoRATrainingConfig)
@@ -287,33 +287,42 @@ This means the module works even when ComfyUI is not running — you can create 
   - `updated_at` (datetime)
 
 #### 8.5 LoRA Job API (`backend/app/api/lora.py`)
-- [ ] `POST /api/lora/jobs` — Create a new LoRA training job
+- [x] `POST /api/lora/jobs` — Create a new LoRA training job
   - Validate character has enough accepted images (≥ 10, warn if < 15)
   - Validate all accepted images have captions
   - Create job record with "pending" status
   - Return job with ID
-- [ ] `GET /api/lora/jobs` — List all training jobs
+- [x] `GET /api/lora/jobs` — List all training jobs
   - Optional `?character_id=` filter
   - Optional `?status=` filter
-- [ ] `GET /api/lora/jobs/{job_id}` — Get job details and status
-- [ ] `POST /api/lora/jobs/{job_id}/start` — Start training (Milestone 9)
-- [ ] `POST /api/lora/jobs/{job_id}/cancel` — Cancel a running job (Milestone 9)
+- [x] `GET /api/lora/jobs/{job_id}` — Get job details and status
+- [x] `POST /api/lora/jobs/{job_id}/start` — Start training (Milestone 9 stub)
+- [x] `POST /api/lora/jobs/{job_id}/cancel` — Cancel a running job (Milestone 9 stub)
 
 #### 8.6 Frontend: Caption Editor (`frontend/src/components/CaptionEditor.jsx`)
-- [ ] Grid view of accepted reference images with their captions
-- [ ] Inline caption editing (click to edit)
-- [ ] "Auto-Generate All Captions" button
-- [ ] Caption template preview showing how the trigger token integrates
-- [ ] Per-image angle tag display
+- [x] Grid view of accepted reference images with their captions
+- [x] Inline caption editing (click to edit)
+- [x] "Auto-Generate All Captions" button
+- [x] Caption style selector (detailed / simple)
+- [x] Per-image angle tag display
+- [x] Caption stats (with/without captions)
+- [x] Missing caption indicator badges
+- [x] API client functions: `generateCaptions()`, `updateCaption()`, `fetchTrainingPresets()`, LoRA job API functions
+- [x] Integrated into CharactersPage with tab navigation (References / Captions)
+- [x] Removed "Generate Captions (coming soon)" placeholder from ReferenceManager
 
 #### 8.7 Frontend: Training Configuration (`frontend/src/components/TrainingConfig.jsx`)
-- [ ] Training preset selector dropdown
-- [ ] When preset selected, auto-fill learning rate, epochs, etc.
-- [ ] Manual override fields for all training parameters
-- [ ] Base model path input (with file picker if possible)
-- [ ] LoRA strength slider (0.5–2.0, default 1.0)
-- [ ] "Start Training" button (disabled until dataset is ready)
-- [ ] Dataset readiness indicator (✅ enough images, ✅ captions generated)
+- [x] Training preset selector dropdown
+- [x] When preset selected, auto-fill learning rate, epochs, etc.
+- [x] Manual override fields for all training parameters
+- [x] Base model path input (with HuggingFace model ID placeholder)
+- [x] LoRA strength slider (0.1–2.0, default 1.0)
+- [x] "Create Training Job" button (disabled until dataset is ready)
+- [x] Dataset readiness indicator (✅ enough images, ✅ captions generated)
+- [x] Existing jobs list with status badges
+- [x] Advanced custom args (JSON) collapsible section
+- [x] Integrated into CharactersPage with tab navigation (References / Captions / Training)
+- [x] API client functions: `fetchTrainingPresets()`, `createLoRAJob()`, `fetchLoRAJobs()`, `fetchLoRAJob()`
 
 ---
 
@@ -331,7 +340,7 @@ This means the module works even when ComfyUI is not running — you can create 
 ### Tasks
 
 #### 9.1 Training Backend Wrapper (`backend/app/core/training_runner.py`)
-- [ ] Implement `TrainingRunner` class:
+- [x] Implement `TrainingRunner` class:
   - `__init__(config_path)` — Load training backend configuration
   - `prepare_dataset(job)` — Copy accepted images + captions to training format
   - `generate_training_command(job)` — Build CLI command for kohya_ss/ai-toolkit
@@ -339,14 +348,14 @@ This means the module works even when ComfyUI is not running — you can create 
   - `get_training_status(job_id)` — Check if process is running
   - `cancel_training(job_id)` — Kill training process
   - `read_training_log(job_id)` — Read latest log output
-- [ ] Support multiple training backends:
+- [x] Support multiple training backends:
   - `kohya_ss` (default) — Uses `accelerate launch` with kohya_ss scripts
   - `ai_toolkit` — Uses ai-toolkit Python API
   - `custom` — User provides custom training command
-- [ ] Training backend config stored in `backend/app/data/training_backends.json`
+- [x] Training backend config stored in `backend/app/data/training_backends.json`
 
 #### 9.2 Training Backends Config (`backend/app/data/training_backends.json`)
-- [ ] Define backend configurations:
+- [x] Define backend configurations:
   ```json
   {
     "backends": [
@@ -371,51 +380,51 @@ This means the module works even when ComfyUI is not running — you can create 
   ```
 
 #### 9.3 Training Execution API (`backend/app/api/lora.py` — extend)
-- [ ] `POST /api/lora/jobs/{job_id}/start` — Start training:
+- [x] `POST /api/lora/jobs/{job_id}/start` — Start training:
   - Validate job is in "pending" state
   - Prepare dataset (copy images + captions to training format)
   - Generate training command from template
   - Execute as background subprocess
   - Update job status to "running"
   - Return job with updated status
-- [ ] `GET /api/lora/jobs/{job_id}/status` — Get real-time training status:
+- [x] `GET /api/lora/jobs/{job_id}/status` — Get real-time training status:
   - Current epoch progress
   - Log output (last N lines)
   - Elapsed time
   - Estimated remaining time (if possible)
-- [ ] `POST /api/lora/jobs/{job_id}/cancel` — Cancel training:
+- [x] `POST /api/lora/jobs/{job_id}/cancel` — Cancel training:
   - Kill subprocess
   - Update job status to "failed"
   - Preserve dataset and logs
-- [ ] `GET /api/lora/jobs/{job_id}/logs` — Get full training log
+- [x] `GET /api/lora/jobs/{job_id}/logs` — Get full training log
 
 #### 9.4 Preview Generation (`backend/app/core/preview_generator.py`)
-- [ ] Implement `generate_preview_prompts(character_profile, trigger_token)`:
+- [x] Implement `generate_preview_prompts(character_profile, trigger_token)`:
   - Generate 4 preview prompts:
     1. Front idle: `{trigger_token}, {species} {class}, front view, idle pose, full body, {art_style}, clean silhouette, plain background`
     2. Side idle: `{trigger_token}, {species} {class}, side view, idle pose, full body, {art_style}, clean silhouette, plain background`
     3. Back idle: `{trigger_token}, {species} {class}, back view, idle pose, full body, {art_style}, clean silhouette, plain background`
     4. Attack pose: `{trigger_token}, {species} {class}, attack pose, {weapon}, full body, {art_style}, clean silhouette, plain background`
   - Return list of prompt strings
-- [ ] Implement `generate_preview_workflow(lora_path, prompts, character_profile)`:
+- [x] Implement `generate_preview_workflow(lora_path, prompts, character_profile)`:
   - Build a ComfyUI workflow JSON that:
     - Loads the trained LoRA
     - Uses the character's base model
     - Generates each preview prompt
     - Saves images to the character's `previews/` directory
   - Return workflow JSON
-- [ ] Preview generation is optional — only works if ComfyUI is configured
+- [x] Preview generation is optional — only works if ComfyUI is configured
 
 #### 9.5 Preview API (`backend/app/api/lora.py` — extend)
-- [ ] `POST /api/lora/jobs/{job_id}/generate-previews` — Generate preview images:
+- [x] `POST /api/lora/jobs/{job_id}/generate-previews` — Generate preview images:
   - Only available if job status is "completed"
   - Requires ComfyUI connection configured
   - Submits preview workflow to ComfyUI
   - Returns preview image paths
-- [ ] `GET /api/lora/jobs/{job_id}/previews` — List preview images for a job
+- [x] `GET /api/lora/jobs/{job_id}/previews` — List preview images for a job
 
 #### 9.6 LoRA Metadata & Versioning (`backend/app/core/lora_metadata.py`)
-- [ ] Implement `generate_lora_metadata(job, character_profile)`:
+- [x] Implement `generate_lora_metadata(job, character_profile)`:
   - Create metadata JSON:
     ```json
     {
@@ -433,47 +442,47 @@ This means the module works even when ComfyUI is not running — you can create 
     }
     ```
   - Save metadata JSON alongside the LoRA file
-- [ ] Implement `version_lora(character_profile, version_number)`:
+- [x] Implement `version_lora(character_profile, version_number)`:
   - Naming convention: `{Project}_{Character}_{Style}_v{N}.safetensors`
   - Auto-increment version number
   - Copy LoRA to versioned filename
 
 #### 9.7 Export to ComfyUI (`backend/app/core/lora_exporter.py`)
-- [ ] Implement `export_to_comfyui(lora_path, comfyui_lora_dir)`:
+- [x] Implement `export_to_comfyui(lora_path, comfyui_lora_dir)`:
   - Copy LoRA file to ComfyUI's `models/loras/` directory
   - Copy metadata JSON alongside
   - Return export path
-- [ ] Implement `generate_lora_workflow(lora_metadata)`:
+- [x] Implement `generate_lora_workflow(lora_metadata)`:
   - Generate a ComfyUI workflow JSON that uses the LoRA:
     - Checkpoint Loader → LoRA Loader → CLIP Text Encode (positive) → CLIP Text Encode (negative) → KSampler → VAE Decode → Save Image
   - Include the trigger token in the positive prompt template
   - Return workflow JSON
 
 #### 9.8 Export API (`backend/app/api/lora.py` — extend)
-- [ ] `POST /api/lora/jobs/{job_id}/export` — Export trained LoRA to ComfyUI:
+- [x] `POST /api/lora/jobs/{job_id}/export` — Export trained LoRA to ComfyUI:
   - Requires ComfyUI settings configured
   - Copies LoRA to ComfyUI models directory
   - Returns export path and metadata
-- [ ] `GET /api/lora/jobs/{job_id}/metadata` — Get LoRA metadata
-- [ ] `GET /api/lora/workflow-template/{character_id}` — Get a ComfyUI workflow template using this LoRA
+- [x] `GET /api/lora/jobs/{job_id}/metadata` — Get LoRA metadata
+- [x] `GET /api/lora/workflow-template/{character_id}` — Get a ComfyUI workflow template using this LoRA
 
 #### 9.9 Frontend: Training Progress (`frontend/src/components/TrainingProgress.jsx`)
-- [ ] Training job list view with status badges
-- [ ] Job detail view showing:
+- [x] Training job list view with status badges
+- [x] Job detail view showing:
   - Configuration summary
   - Current epoch / total epochs
   - Elapsed time
   - Log output (scrollable, auto-refresh)
   - Preview images (when available)
   - Cancel button (for running jobs)
-- [ ] Auto-refresh status every 5 seconds for running jobs
+- [x] Auto-refresh status every 5 seconds for running jobs
 
 #### 9.10 Frontend: LoRA Detail & Export (`frontend/src/components/LoraDetail.jsx`)
-- [ ] LoRA metadata display (trigger token, recommended strength, etc.)
-- [ ] Preview images grid
-- [ ] "Export to ComfyUI" button
+- [x] LoRA metadata display (trigger token, recommended strength, etc.)
+- [x] Preview images grid
+- [x] "Export to ComfyUI" button
 - [ ] "Download LoRA" button
-- [ ] "Generate ComfyUI Workflow" button
+- [x] "Generate ComfyUI Workflow" button
 - [ ] Version history list
 - [ ] "Delete LoRA" action with confirmation
 

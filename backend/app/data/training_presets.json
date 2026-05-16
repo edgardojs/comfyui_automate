@@ -1,0 +1,69 @@
+{
+  "presets": [
+    {
+      "id": "pixel_art_character",
+      "label": "Pixel Art Character LoRA",
+      "description": "Best for 32x32 or 64x64 pixel art sprites",
+      "base_model": "stabilityai/stable-diffusion-xl-base-1.0",
+      "learning_rate": 0.0002,
+      "epochs": 18,
+      "recommended_images": 18,
+      "preview_interval": 2,
+      "output_format": "safetensors",
+      "caption_style": "detailed",
+      "recommended_angles": ["front", "side", "back", "three-quarter"]
+    },
+    {
+      "id": "hd_2d_character",
+      "label": "HD 2D Character LoRA",
+      "description": "Best for high-resolution 2D character art",
+      "base_model": "stabilityai/stable-diffusion-xl-base-1.0",
+      "learning_rate": 0.0001,
+      "epochs": 20,
+      "recommended_images": 20,
+      "preview_interval": 2,
+      "output_format": "safetensors",
+      "caption_style": "detailed",
+      "recommended_angles": ["front", "side", "back", "three-quarter"]
+    },
+    {
+      "id": "chibi_character",
+      "label": "Chibi Character LoRA",
+      "description": "Best for chibi-style game characters",
+      "base_model": "stabilityai/stable-diffusion-xl-base-1.0",
+      "learning_rate": 0.0002,
+      "epochs": 15,
+      "recommended_images": 15,
+      "preview_interval": 3,
+      "output_format": "safetensors",
+      "caption_style": "simple",
+      "recommended_angles": ["front", "side"]
+    },
+    {
+      "id": "top_down_rpg",
+      "label": "Top-Down RPG Character LoRA",
+      "description": "Best for top-down RPG sprites",
+      "base_model": "stabilityai/stable-diffusion-xl-base-1.0",
+      "learning_rate": 0.0002,
+      "epochs": 18,
+      "recommended_images": 16,
+      "preview_interval": 2,
+      "output_format": "safetensors",
+      "caption_style": "detailed",
+      "recommended_angles": ["front", "side", "back"]
+    },
+    {
+      "id": "side_scroller",
+      "label": "Side-Scroller Character LoRA",
+      "description": "Best for side-scrolling game characters",
+      "base_model": "stabilityai/stable-diffusion-xl-base-1.0",
+      "learning_rate": 0.0002,
+      "epochs": 18,
+      "recommended_images": 16,
+      "preview_interval": 2,
+      "output_format": "safetensors",
+      "caption_style": "detailed",
+      "recommended_angles": ["side"]
+    }
+  ]
+}

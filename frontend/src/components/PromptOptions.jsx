@@ -36,13 +36,33 @@ function PromptOptions({
     async function load() {
       try {
         setError(null)
-        const [tmplData, profData] = await Promise.all([
+        const results = await Promise.allSettled([
           fetchTemplates(),
           fetchNegativeProfiles(),
         ])
         if (!cancelled) {
-          setTemplates(tmplData.templates || [])
-          setProfiles(profData.profiles || [])
+          const tmplResult = results[0]
+          const profResult = results[1]
+
+          // Use partial data if at least one request succeeded
+          if (tmplResult.status === 'fulfilled') {
+            setTemplates(tmplResult.value.templates || [])
+          }
+          if (profResult.status === 'fulfilled') {
+            setProfiles(profResult.value.profiles || [])
+          }
+
+          // Show error only for requests that failed
+          const errors = []
+          if (tmplResult.status === 'rejected') {
+            errors.push(`Templates: ${tmplResult.reason?.message || 'Failed to load'}`)
+          }
+          if (profResult.status === 'rejected') {
+            errors.push(`Profiles: ${profResult.reason?.message || 'Failed to load'}`)
+          }
+          if (errors.length > 0) {
+            setError(errors.join('; '))
+          }
         }
       } catch (err) {
         if (!cancelled) setError(err.message)

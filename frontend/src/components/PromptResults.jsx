@@ -133,7 +133,7 @@ function PromptResults({ results, error, isGenerating, onCopy, onSendToComfyUI, 
               ▶ Resolved Attributes
             </summary>
             <div className="mt-2 flex flex-wrap gap-1.5">
-              {Object.entries(item.attributes).map(([key, value]) => (
+              {Object.entries(item.attributes || {}).map(([key, value]) => (
                 <span
                   key={key}
                   className="inline-flex items-center rounded-full bg-gray-800 px-2.5 py-0.5 text-xs text-gray-400 border border-gray-700"

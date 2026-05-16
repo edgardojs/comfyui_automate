@@ -194,9 +194,6 @@ def patch_workflow(
     Raises:
         ValueError: If a specified node ID is not found in the workflow.
     """
-    import copy
-    import random
-
     patched = copy.deepcopy(workflow_json)
 
     # --- Positive prompt node ---

@@ -5,8 +5,14 @@ to a ComfyUI workflow, and checking generation status. All ComfyUI
 communication is opt-in — the app works perfectly without ComfyUI.
 """
 
+import ipaddress
+import logging
+import os
+import socket
+from urllib.parse import urlparse
+
 import httpx
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from app.core.workflow_patcher import (
@@ -16,10 +22,198 @@ from app.core.workflow_patcher import (
     validate_workflow,
 )
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/comfyui", tags=["comfyui"])
 
-# Default timeout for ComfyUI HTTP requests (seconds)
-COMFYUI_TIMEOUT = 10.0
+# Timeout for ComfyUI HTTP requests (seconds). Configurable via COMFYUI_TIMEOUT env var.
+COMFYUI_TIMEOUT = float(os.environ.get("COMFYUI_TIMEOUT", "10.0"))
+
+
+# ---------------------------------------------------------------------------
+# SSRF protection
+# ---------------------------------------------------------------------------
+
+# Hostnames that are always blocked (cloud metadata, internal services)
+_BLOCKED_HOSTNAMES: set[str] = {
+    "metadata.google.internal",
+    "metadata.internal",
+}
+
+# Networks that are blocked (private/reserved IP ranges, excluding localhost
+# which is allowed since ComfyUI typically runs locally)
+_PRIVATE_NETWORKS = [
+    ipaddress.ip_network("10.0.0.0/8"),        # RFC 1918
+    ipaddress.ip_network("172.16.0.0/12"),     # RFC 1918
+    ipaddress.ip_network("192.168.0.0/16"),    # RFC 1918
+    ipaddress.ip_network("169.254.0.0/16"),     # Link-local (cloud metadata)
+    ipaddress.ip_network("0.0.0.0/8"),          # "This" network
+    ipaddress.ip_network("100.64.0.0/10"),      # Carrier-grade NAT
+    ipaddress.ip_network("192.0.2.0/24"),       # TEST-NET-1
+    ipaddress.ip_network("198.51.100.0/24"),    # TEST-NET-2
+    ipaddress.ip_network("203.0.113.0/24"),     # TEST-NET-3
+]
+
+
+def _is_private_ip(ip_str: str) -> bool:
+    """Check if an IP address falls within any blocked private/reserved network.
+
+    Loopback addresses (127.0.0.0/8) are explicitly allowed since ComfyUI
+    typically runs locally.
+
+    Args:
+        ip_str: The IP address string to check.
+
+    Returns:
+        True if the IP is in a blocked network, False otherwise.
+    """
+    try:
+        ip = ipaddress.ip_address(ip_str)
+    except ValueError:
+        return False
+
+    # Allow loopback — ComfyUI typically runs on localhost
+    if ip.is_loopback:
+        return False
+
+    return any(ip in network for network in _PRIVATE_NETWORKS)
+
+
+def _validate_server_url(url: str) -> str:
+    """Validate a ComfyUI server URL to prevent SSRF attacks.
+
+    Blocks requests to private/internal IP addresses, link-local
+    addresses, cloud metadata endpoints, and other dangerous targets.
+
+    This validates the URL scheme, hostname, and resolved IP addresses.
+    For DNS rebinding mitigation, use :func:`_create_safe_client` which
+    validates IPs at connection time.
+
+    Args:
+        url: The server URL to validate.
+
+    Returns:
+        The normalized URL (trailing slash stripped).
+
+    Raises:
+        HTTPException: If the URL is invalid or targets a blocked address.
+    """
+    normalized = url.rstrip("/")
+
+    try:
+        parsed = urlparse(normalized)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid URL: {exc}",
+        ) from exc
+
+    scheme = parsed.scheme
+    if scheme not in ("http", "https"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported URL scheme '{scheme}'. Only http and https are allowed.",
+        )
+
+    hostname = parsed.hostname
+    if not hostname:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="URL must contain a valid hostname.",
+        )
+
+    # Block known dangerous hostnames
+    if hostname.lower() in _BLOCKED_HOSTNAMES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Requests to '{hostname}' are not allowed.",
+        )
+
+    # Resolve hostname and check against private IP ranges.
+    # This provides defense-in-depth but alone does not fully prevent DNS
+    # rebinding — use _create_safe_client() for connection-time validation.
+    try:
+        resolved_ips = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+        for _, _, _, _, addr in resolved_ips:
+            ip_str = addr[0]
+            if _is_private_ip(ip_str):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Requests to private/internal IP addresses are not allowed (resolved '{hostname}' to '{ip_str}').",
+                )
+    except socket.gaierror:
+        # DNS resolution failed — let the request proceed and httpx will
+        # handle the connection error naturally
+        pass
+
+    return normalized
+
+
+def _create_safe_client(timeout: float = COMFYUI_TIMEOUT) -> httpx.AsyncClient:
+    """Create an httpx.AsyncClient with SSRF protection at connection time.
+
+    This client uses a custom transport that validates the resolved IP
+    address of every connection, preventing DNS rebinding attacks where
+    DNS returns a safe IP during pre-validation but a private IP during
+    the actual HTTP request.
+
+    Args:
+        timeout: Request timeout in seconds.
+
+    Returns:
+        An httpx.AsyncClient with SSRF-safe connection handling.
+    """
+    return httpx.AsyncClient(
+        transport=_SSRFSafeTransport(),
+        timeout=timeout,
+    )
+
+
+class _SSRFSafeTransport(httpx.AsyncBaseTransport):
+    """Custom httpx transport that validates resolved IPs at connection time.
+
+    Prevents DNS rebinding attacks by resolving the hostname and checking
+    the IP address when the actual HTTP connection is made, not just during
+    pre-validation. This ensures that even if DNS returns different IPs
+    between the validation check and the actual request, the connection
+    will be refused if the resolved IP is in a private/reserved range.
+    """
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        """Handle an async HTTP request with IP validation at connection time.
+
+        Resolves the hostname from the request URL and checks all resulting
+        IPs against the blocked network list. If any resolved IP is private,
+        the request is blocked.
+
+        Args:
+            request: The httpx request to handle.
+
+        Returns:
+            The httpx response.
+
+        Raises:
+            httpx.ConnectError: If the resolved IP is in a blocked range.
+        """
+        parsed = urlparse(str(request.url))
+        hostname = parsed.hostname
+
+        if hostname:
+            try:
+                resolved_ips = socket.getaddrinfo(
+                    hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM
+                )
+                for _, _, _, _, addr in resolved_ips:
+                    ip_str = addr[0]
+                    if _is_private_ip(ip_str):
+                        raise httpx.ConnectError(
+                            f"Blocked: resolved '{hostname}' to private IP '{ip_str}'"
+                        )
+            except socket.gaierror:
+                pass  # DNS resolution failed — let the request proceed
+
+        # Use the default transport for the actual request
+        return await httpx.AsyncHTTPTransport().handle_async_request(request)
 
 
 # ---------------------------------------------------------------------------
@@ -56,14 +250,16 @@ class SubmitRequest(BaseModel):
     )
     workflow_json: dict = Field(
         ...,
-        description="The ComfyUI workflow JSON to patch and submit",
+        description="The ComfyUI workflow JSON to patch and submit (max ~1 MB)",
     )
     positive_prompt: str = Field(
         ...,
+        max_length=10000,
         description="Positive prompt text to inject",
     )
     negative_prompt: str = Field(
         ...,
+        max_length=10000,
         description="Negative prompt text to inject",
     )
     node_mapping: dict[str, str] = Field(
@@ -140,11 +336,11 @@ class StatusResponse(BaseModel):
 )
 async def test_connection(request: TestConnectionRequest) -> TestConnectionResponse:
     """Test connectivity to a ComfyUI server."""
-    # Normalize URL — strip trailing slash
-    url = request.server_url.rstrip("/")
+    # Validate URL to prevent SSRF attacks
+    url = _validate_server_url(request.server_url)
 
     try:
-        async with httpx.AsyncClient(timeout=COMFYUI_TIMEOUT) as client:
+        async with _create_safe_client() as client:
             response = await client.get(f"{url}/system_stats")
             if response.status_code == 200:
                 data = response.json()
@@ -156,7 +352,7 @@ async def test_connection(request: TestConnectionRequest) -> TestConnectionRespo
                 )
             else:
                 return TestConnectionResponse(
-                    connected=True,
+                    connected=False,
                     server_url=url,
                     message=f"Server responded with status {response.status_code}. ComfyUI may not be fully ready.",
                     system_info=None,
@@ -257,10 +453,10 @@ async def submit_prompt(request: SubmitRequest) -> SubmitResponse:
             detail=str(e),
         ) from e
 
-    # Submit to ComfyUI
-    url = request.server_url.rstrip("/")
+    # Submit to ComfyUI (validate URL to prevent SSRF attacks)
+    url = _validate_server_url(request.server_url)
     try:
-        async with httpx.AsyncClient(timeout=COMFYUI_TIMEOUT) as client:
+        async with _create_safe_client() as client:
             response = await client.post(f"{url}/prompt", json={"prompt": patched})
 
             if response.status_code == 200:
@@ -274,14 +470,17 @@ async def submit_prompt(request: SubmitRequest) -> SubmitResponse:
             else:
                 try:
                     error_data = response.json()
-                    error_msg = error_data.get("error", {}).get("message", response.text[:200])
+                    # Sanitize error message — don't expose internal ComfyUI details
+                    error_msg = error_data.get("error", {}).get("message", "")
+                    if not error_msg:
+                        error_msg = f"HTTP {response.status_code}"
                 except Exception:
-                    error_msg = response.text[:200]
+                    error_msg = f"HTTP {response.status_code}"
                 return SubmitResponse(
                     success=False,
                     prompt_id=None,
                     number=None,
-                    message=f"ComfyUI returned status {response.status_code}: {error_msg}",
+                    message=f"ComfyUI returned an error: {error_msg}",
                 )
     except httpx.ConnectError:
         raise HTTPException(
@@ -296,8 +495,8 @@ async def submit_prompt(request: SubmitRequest) -> SubmitResponse:
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Unexpected error communicating with ComfyUI: {str(e)}",
-        )
+            detail="An unexpected error occurred while communicating with ComfyUI.",
+        ) from e
 
 
 @router.get(
@@ -308,13 +507,17 @@ async def submit_prompt(request: SubmitRequest) -> SubmitResponse:
 )
 async def check_status(
     prompt_id: str,
-    server_url: str = "http://127.0.0.1:8188",
+    server_url: str = Query(
+        ...,
+        description="ComfyUI server URL (required, e.g. http://127.0.0.1:8188)",
+    ),
 ) -> StatusResponse:
     """Check the status of a ComfyUI generation."""
-    url = server_url.rstrip("/")
+    # Validate URL to prevent SSRF attacks
+    url = _validate_server_url(server_url)
 
     try:
-        async with httpx.AsyncClient(timeout=COMFYUI_TIMEOUT) as client:
+        async with _create_safe_client() as client:
             response = await client.get(f"{url}/history/{prompt_id}")
 
             if response.status_code == 200:

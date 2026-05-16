@@ -46,16 +46,14 @@ async def _override_get_session():
         yield session
 
 
-# Override the app's dependency with the test session
-app.dependency_overrides[get_session] = _override_get_session
-
-
 @pytest_asyncio.fixture
 async def client():
-    """Provide an async HTTP test client."""
+    """Provide an async HTTP test client with dependency overrides scoped to this fixture."""
+    app.dependency_overrides[get_session] = _override_get_session
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
+    app.dependency_overrides.pop(get_session, None)
 
 
 # ---------------------------------------------------------------------------

@@ -172,6 +172,21 @@ class TestPatchWorkflowAPIFormat:
         assert isinstance(result["3"]["inputs"]["seed"], int)
         assert result["3"]["inputs"]["seed"] != 12345  # very unlikely to collide
 
+    def test_patches_seed_zero_is_preserved(self):
+        """seed=0 is a legitimate value and should not be treated as falsy/randomized."""
+        result = patch_workflow(
+            SAMPLE_API_WORKFLOW,
+            positive_prompt="test",
+            negative_prompt="test",
+            node_mapping={
+                "positive_node_id": "6",
+                "negative_node_id": "7",
+                "seed_node_id": "3",
+            },
+            seed=0,
+        )
+        assert result["3"]["inputs"]["seed"] == 0
+
     def test_does_not_modify_original(self):
         original = json.loads(json.dumps(SAMPLE_API_WORKFLOW))
         patch_workflow(

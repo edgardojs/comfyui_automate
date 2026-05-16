@@ -5,8 +5,6 @@ history items as favorites. Prompt generations are automatically saved
 to history when created via the /api/prompts/generate endpoint.
 """
 
-import json
-
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import desc, func, select
@@ -41,8 +39,8 @@ class HistoryItem(BaseModel):
     is_favorite: bool = Field(
         default=False, description="Whether this item is marked as a favorite"
     )
-    created_at: str | None = Field(
-        default=None, description="ISO 8601 timestamp when the generation was created"
+    created_at: str = Field(
+        ..., description="ISO 8601 timestamp when the generation was created"
     )
 
 
@@ -67,11 +65,11 @@ def _row_to_history_item(row: PromptHistoryRow) -> HistoryItem:
         generation_id=row.generation_id,  # type: ignore[arg-type]
         positive_prompt=row.positive_prompt,  # type: ignore[arg-type]
         negative_prompt=row.negative_prompt,  # type: ignore[arg-type]
-        attributes=json.loads(row.attributes_json),  # type: ignore[arg-type]
+        attributes=row.attributes,  # type: ignore[arg-type]
         template_id=row.template_id,  # type: ignore[arg-type]
         negative_profile_id=row.negative_profile_id,  # type: ignore[arg-type]
         is_favorite=bool(row.is_favorite),  # type: ignore[arg-type]
-        created_at=row.created_at.isoformat() if row.created_at else None,  # type: ignore[union-attr]
+        created_at=row.created_at.isoformat(),  # type: ignore[union-attr]
     )
 
 
@@ -150,8 +148,8 @@ async def toggle_favorite(
             detail=f"History entry '{generation_id}' not found",
         )
 
-    # Toggle the favorite flag
-    row.is_favorite = 0 if row.is_favorite else 1  # type: ignore[assignment]
+    # Toggle the favorite flag (Boolean on PostgreSQL, Integer on SQLite)
+    row.is_favorite = not row.is_favorite  # type: ignore[assignment]
     await session.commit()
     await session.refresh(row)
 

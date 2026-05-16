@@ -7,6 +7,11 @@
  * - Error handling for non-OK responses
  * - safeJson handling of malformed responses
  * - Pagination parameter encoding
+ *
+ * Note: fetchWithTimeout wraps fetch with an AbortController signal,
+ * so all fetch calls include a `signal` property in the options.
+ * We use `expect.objectContaining` to match the relevant options
+ * while ignoring the signal.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -29,10 +34,12 @@ import {
 
 /** Create a mock Response object. */
 function mockResponse(body, status = 200, ok = true) {
+  const text = body !== null && body !== undefined ? JSON.stringify(body) : ''
   return {
     ok,
     status,
     json: vi.fn().mockResolvedValue(body),
+    text: vi.fn().mockResolvedValue(text),
   }
 }
 
@@ -42,6 +49,19 @@ function mockNonJsonResponse(status = 200) {
     ok: true,
     status,
     json: vi.fn().mockRejectedValue(new SyntaxError('Unexpected token')),
+    text: vi.fn().mockResolvedValue('not json'),
+  }
+}
+
+/**
+ * Assert that fetch was called with the given URL and optional options.
+ * Ignores the `signal` property added by fetchWithTimeout.
+ */
+function expectFetchCalledWith(url, options) {
+  if (options) {
+    expect(global.fetch).toHaveBeenCalledWith(url, expect.objectContaining(options))
+  } else {
+    expect(global.fetch).toHaveBeenCalledWith(url, expect.objectContaining({}))
   }
 }
 
@@ -60,7 +80,7 @@ describe('fetchAttributes', () => {
 
     const result = await fetchAttributes()
 
-    expect(global.fetch).toHaveBeenCalledWith('/api/attributes')
+    expect(global.fetch).toHaveBeenCalledWith('/api/attributes', expect.objectContaining({}))
     expect(result).toEqual(data)
   })
 
@@ -70,7 +90,7 @@ describe('fetchAttributes', () => {
 
     const result = await fetchAttributes('classes')
 
-    expect(global.fetch).toHaveBeenCalledWith('/api/attributes?category=classes')
+    expect(global.fetch).toHaveBeenCalledWith('/api/attributes?category=classes', expect.objectContaining({}))
     expect(result).toEqual(data)
   })
 
@@ -79,7 +99,7 @@ describe('fetchAttributes', () => {
 
     await fetchAttributes('my category')
 
-    expect(global.fetch).toHaveBeenCalledWith('/api/attributes?category=my%20category')
+    expect(global.fetch).toHaveBeenCalledWith('/api/attributes?category=my%20category', expect.objectContaining({}))
   })
 
   it('throws on non-OK response', async () => {
@@ -104,7 +124,7 @@ describe('fetchTemplates', () => {
 
     const result = await fetchTemplates()
 
-    expect(global.fetch).toHaveBeenCalledWith('/api/templates')
+    expect(global.fetch).toHaveBeenCalledWith('/api/templates', expect.objectContaining({}))
     expect(result).toEqual(data)
   })
 
@@ -130,7 +150,7 @@ describe('fetchNegativeProfiles', () => {
 
     const result = await fetchNegativeProfiles()
 
-    expect(global.fetch).toHaveBeenCalledWith('/api/negative-profiles')
+    expect(global.fetch).toHaveBeenCalledWith('/api/negative-profiles', expect.objectContaining({}))
     expect(result).toEqual(data)
   })
 
@@ -156,7 +176,7 @@ describe('generatePrompts', () => {
 
     const result = await generatePrompts({ attributes: {} })
 
-    expect(global.fetch).toHaveBeenCalledWith('/api/prompts/generate', {
+    expect(global.fetch).toHaveBeenCalledWith('/api/prompts/generate', expect.objectContaining({
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -166,7 +186,7 @@ describe('generatePrompts', () => {
         template_id: undefined,
         negative_profile_id: undefined,
       }),
-    })
+    }))
     expect(result).toEqual(data)
   })
 
@@ -182,7 +202,7 @@ describe('generatePrompts', () => {
       negativeProfileId: 'general_sprite_cleanup',
     })
 
-    expect(global.fetch).toHaveBeenCalledWith('/api/prompts/generate', {
+    expect(global.fetch).toHaveBeenCalledWith('/api/prompts/generate', expect.objectContaining({
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -192,7 +212,7 @@ describe('generatePrompts', () => {
         template_id: 'front_view_sprite',
         negative_profile_id: 'general_sprite_cleanup',
       }),
-    })
+    }))
   })
 
   it('throws on non-OK response', async () => {
@@ -220,11 +240,11 @@ describe('savePreset', () => {
 
     const result = await savePreset(preset)
 
-    expect(global.fetch).toHaveBeenCalledWith('/api/presets', {
+    expect(global.fetch).toHaveBeenCalledWith('/api/presets', expect.objectContaining({
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(preset),
-    })
+    }))
     expect(result).toEqual(response)
   })
 
@@ -250,7 +270,7 @@ describe('fetchPresets', () => {
 
     const result = await fetchPresets()
 
-    expect(global.fetch).toHaveBeenCalledWith('/api/presets')
+    expect(global.fetch).toHaveBeenCalledWith('/api/presets', expect.objectContaining({}))
     expect(result).toEqual(data)
   })
 })
@@ -269,18 +289,18 @@ describe('deletePreset', () => {
 
     await deletePreset('preset_abc')
 
-    expect(global.fetch).toHaveBeenCalledWith('/api/presets/preset_abc', {
+    expect(global.fetch).toHaveBeenCalledWith('/api/presets/preset_abc', expect.objectContaining({
       method: 'DELETE',
-    })
+    }))
   })
 
   it('encodes special characters in preset ID', async () => {
     global.fetch.mockResolvedValue(mockResponse(null, 404, false))
 
     await expect(deletePreset('preset/special')).rejects.toThrow()
-    expect(global.fetch).toHaveBeenCalledWith('/api/presets/preset%2Fspecial', {
+    expect(global.fetch).toHaveBeenCalledWith('/api/presets/preset%2Fspecial', expect.objectContaining({
       method: 'DELETE',
-    })
+    }))
   })
 
   it('throws on non-OK response', async () => {
@@ -305,7 +325,7 @@ describe('fetchHistory', () => {
 
     const result = await fetchHistory()
 
-    expect(global.fetch).toHaveBeenCalledWith('/api/history')
+    expect(global.fetch).toHaveBeenCalledWith('/api/history', expect.objectContaining({}))
     expect(result).toEqual(data)
   })
 
@@ -315,7 +335,7 @@ describe('fetchHistory', () => {
 
     await fetchHistory({ limit: 10 })
 
-    expect(global.fetch).toHaveBeenCalledWith('/api/history?limit=10')
+    expect(global.fetch).toHaveBeenCalledWith('/api/history?limit=10', expect.objectContaining({}))
   })
 
   it('sends offset parameter when not default', async () => {
@@ -324,7 +344,7 @@ describe('fetchHistory', () => {
 
     await fetchHistory({ offset: 20 })
 
-    expect(global.fetch).toHaveBeenCalledWith('/api/history?offset=20')
+    expect(global.fetch).toHaveBeenCalledWith('/api/history?offset=20', expect.objectContaining({}))
   })
 
   it('sends both limit and offset', async () => {
@@ -333,7 +353,7 @@ describe('fetchHistory', () => {
 
     await fetchHistory({ limit: 5, offset: 10 })
 
-    expect(global.fetch).toHaveBeenCalledWith('/api/history?limit=5&offset=10')
+    expect(global.fetch).toHaveBeenCalledWith('/api/history?limit=5&offset=10', expect.objectContaining({}))
   })
 
   it('throws on non-OK response', async () => {
@@ -358,9 +378,9 @@ describe('favoriteHistoryItem', () => {
 
     const result = await favoriteHistoryItem('gen_1')
 
-    expect(global.fetch).toHaveBeenCalledWith('/api/history/gen_1/favorite', {
+    expect(global.fetch).toHaveBeenCalledWith('/api/history/gen_1/favorite', expect.objectContaining({
       method: 'POST',
-    })
+    }))
     expect(result).toEqual(data)
   })
 
@@ -368,9 +388,9 @@ describe('favoriteHistoryItem', () => {
     global.fetch.mockResolvedValue(mockResponse({}, 404, false))
 
     await expect(favoriteHistoryItem('gen/special')).rejects.toThrow()
-    expect(global.fetch).toHaveBeenCalledWith('/api/history/gen%2Fspecial/favorite', {
+    expect(global.fetch).toHaveBeenCalledWith('/api/history/gen%2Fspecial/favorite', expect.objectContaining({
       method: 'POST',
-    })
+    }))
   })
 
   it('throws on non-OK response', async () => {
@@ -397,7 +417,7 @@ describe('healthCheck', () => {
 
     const result = await healthCheck()
 
-    expect(global.fetch).toHaveBeenCalledWith('/api/health')
+    expect(global.fetch).toHaveBeenCalledWith('/api/health', expect.objectContaining({}))
     expect(result).toEqual(data)
   })
 
@@ -422,6 +442,7 @@ describe('safeJson error handling', () => {
       ok: true,
       status: 200,
       json: vi.fn().mockRejectedValue(new SyntaxError('Unexpected token')),
+      text: vi.fn().mockResolvedValue('not json'),
     }
     global.fetch.mockResolvedValue(nonJsonRes)
 

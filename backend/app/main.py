@@ -4,13 +4,18 @@ import os
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.api.history import router as history_router
 from app.api.presets import router as presets_router
 from app.api.prompts import router as prompts_router
 from app.api.comfyui import router as comfyui_router
+from app.api.characters import router as characters_router
+from app.api.references import router as references_router
+from app.api.training_presets import router as training_presets_router
+from app.api.lora import router as lora_router
 from app.db.database import init_db
 
 # CORS origins — configurable via CORS_ORIGINS env var (comma-separated)
@@ -18,6 +23,9 @@ from app.db.database import init_db
 CORS_ORIGINS = os.environ.get(
     "CORS_ORIGINS", "http://localhost:5173,http://localhost:3000"
 ).split(",")
+
+# Maximum request body size (10 MB)
+MAX_REQUEST_BODY_SIZE = 10 * 1024 * 1024
 
 
 @asynccontextmanager
@@ -42,11 +50,31 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def limit_request_body_size(request: Request, call_next):
+    """Reject requests with body larger than MAX_REQUEST_BODY_SIZE."""
+    if request.headers.get("content-length"):
+        try:
+            content_length = int(request.headers["content-length"])
+            if content_length > MAX_REQUEST_BODY_SIZE:
+                return JSONResponse(
+                    status_code=413,
+                    content={"detail": f"Request body too large. Maximum size is {MAX_REQUEST_BODY_SIZE // (1024 * 1024)} MB."},
+                )
+        except (ValueError, TypeError):
+            pass
+    return await call_next(request)
+
 # Register API routers
 app.include_router(prompts_router)
 app.include_router(presets_router)
 app.include_router(history_router)
 app.include_router(comfyui_router)
+app.include_router(characters_router)
+app.include_router(references_router)
+app.include_router(training_presets_router)
+app.include_router(lora_router)
 
 
 @app.get("/api/health")

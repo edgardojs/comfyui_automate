@@ -1,0 +1,40 @@
+{
+  "backends": [
+    {
+      "id": "kohya_ss",
+      "label": "Kohya_ss",
+      "description": "Popular LoRA training tool for Stable Diffusion. Uses accelerate launch with kohya_ss train_network.py scripts.",
+      "command_template": "accelerate launch --num_cpu_threads_per_process 2 train_network.py --dataset_dir={dataset_dir} --output_dir={output_dir} --learning_rate={learning_rate} --max_train_epochs={epochs} --save_every_n_epochs={preview_interval} --output_name={output_name} --network_module=networks.lora --network_dim=32 --network_alpha=16 --xformers --mixed_precision=fp16 --cache_latents --enable_bucket",
+      "requires_accelerate": true,
+      "supported_models": ["sd1.5", "sdxl", "flux"],
+      "default_args": {
+        "network_dim": 32,
+        "network_alpha": 16,
+        "mixed_precision": "fp16",
+        "xformers": true,
+        "cache_latents": true,
+        "enable_bucket": true
+      }
+    },
+    {
+      "id": "ai_toolkit",
+      "label": "AI Toolkit",
+      "description": "All-in-one training toolkit for Stable Diffusion LoRAs. Uses a YAML config file approach.",
+      "command_template": "python run.py --dataset_dir={dataset_dir} --output_dir={output_dir} --learning_rate={learning_rate} --max_train_epochs={epochs} --save_every_n_epochs={preview_interval}",
+      "requires_accelerate": false,
+      "supported_models": ["sd1.5", "sdxl"],
+      "default_args": {
+        "mixed_precision": "fp16"
+      }
+    },
+    {
+      "id": "custom",
+      "label": "Custom Command",
+      "description": "Provide your own training command. Use {dataset_dir}, {output_dir}, {learning_rate}, {epochs}, {preview_interval}, and {output_name} as placeholders.",
+      "command_template": "",
+      "requires_accelerate": false,
+      "supported_models": [],
+      "default_args": {}
+    }
+  ]
+}

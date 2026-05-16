@@ -185,6 +185,7 @@ function PromptHistory({ onCopy, showToast }) {
                         className={`text-sm flex-shrink-0 cursor-pointer transition-transform hover:scale-125
                           ${item.is_favorite ? 'text-amber-400' : 'text-gray-600 hover:text-gray-400'}`}
                         title={item.is_favorite ? 'Remove from favorites' : 'Add to favorites'}
+                        aria-label={item.is_favorite ? 'Remove from favorites' : 'Add to favorites'}
                       >
                         {item.is_favorite ? '⭐' : '☆'}
                       </button>

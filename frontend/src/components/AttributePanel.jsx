@@ -124,6 +124,7 @@ function AttributePanel({
                       : 'bg-gray-800 text-gray-500 border border-gray-700 hover:text-gray-300'
                     }`}
                   title={isLocked ? 'Unlock this attribute' : 'Lock this attribute across variations'}
+                  aria-label={isLocked ? 'Unlock this attribute' : 'Lock this attribute across variations'}
                 >
                   {isLocked ? '🔒' : '🔓'}
                 </button>

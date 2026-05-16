@@ -5,8 +5,6 @@ prompts, browsing the attribute library, templates, and negative profiles.
 Generated prompts are automatically saved to the history table.
 """
 
-import json
-
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -68,7 +66,7 @@ async def generate_prompts(
             generation_id=response.generation_id,
             positive_prompt=first.positive_prompt,
             negative_prompt=first.negative_prompt,
-            attributes_json=json.dumps(first.attributes),
+            attributes=first.attributes,
             template_id=template_id,
             negative_profile_id=negative_profile_id,
         )

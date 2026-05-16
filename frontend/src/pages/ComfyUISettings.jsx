@@ -1,4 +1,6 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
+import { testComfyUIConnection, validateComfyUIWorkflow } from '../api/client'
+import { loadComfyUISettings, saveComfyUISettings, getDefaultComfyUISettings } from '../api/comfyuiSettings'
 
 /**
  * ComfyUISettings — Page for configuring ComfyUI connection settings.
@@ -12,37 +14,8 @@ import { useState, useCallback, useEffect } from 'react'
  * ComfyUI is entirely optional — the prompt generator works without it.
  */
 
-const STORAGE_KEY = 'comfyui_settings'
-
-const DEFAULT_SETTINGS = {
-  serverUrl: 'http://127.0.0.1:8188',
-  workflowJson: '',
-  positiveNodeId: '',
-  positiveInputName: 'text',
-  negativeNodeId: '',
-  negativeInputName: 'text',
-  seedNodeId: '',
-  seedInputName: 'seed',
-}
-
-function loadSettings() {
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY)
-    if (stored) {
-      return { ...DEFAULT_SETTINGS, ...JSON.parse(stored) }
-    }
-  } catch {
-    // Ignore parse errors
-  }
-  return { ...DEFAULT_SETTINGS }
-}
-
-function saveSettings(settings) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(settings))
-}
-
 function ComfyUISettings() {
-  const [settings, setSettings] = useState(loadSettings)
+  const [settings, setSettings] = useState(loadComfyUISettings)
   const [testResult, setTestResult] = useState(null)
   const [isTesting, setIsTesting] = useState(false)
   const [validationResult, setValidationResult] = useState(null)
@@ -50,9 +23,16 @@ function ComfyUISettings() {
   const [saveMessage, setSaveMessage] = useState('')
   const [fileError, setFileError] = useState('')
 
-  // Auto-save on change
+  // Debounced auto-save: only persist to localStorage after 500ms of inactivity
+  const saveTimerRef = useRef(null)
   useEffect(() => {
-    saveSettings(settings)
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    saveTimerRef.current = setTimeout(() => {
+      saveComfyUISettings(settings)
+    }, 500)
+    return () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    }
   }, [settings])
 
   const handleChange = useCallback((field, value) => {
@@ -64,17 +44,12 @@ function ComfyUISettings() {
     setIsTesting(true)
     setTestResult(null)
     try {
-      const res = await fetch('/api/comfyui/test', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ server_url: settings.serverUrl }),
-      })
-      const data = await res.json()
+      const data = await testComfyUIConnection(settings.serverUrl)
       setTestResult(data)
     } catch (err) {
       setTestResult({
         connected: false,
-        message: `Request failed: ${err.message}`,
+        message: `Connection test failed: ${err.message}`,
       })
     } finally {
       setIsTesting(false)
@@ -101,12 +76,7 @@ function ComfyUISettings() {
         setIsValidating(false)
         return
       }
-      const res = await fetch('/api/comfyui/validate-workflow', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ workflow_json: workflowObj }),
-      })
-      const data = await res.json()
+      const data = await validateComfyUIWorkflow(workflowObj)
       setValidationResult(data)
     } catch (err) {
       setValidationResult({
@@ -143,13 +113,13 @@ function ComfyUISettings() {
   }, [])
 
   const handleSave = useCallback(() => {
-    saveSettings(settings)
+    saveComfyUISettings(settings)
     setSaveMessage('Settings saved!')
     setTimeout(() => setSaveMessage(''), 2000)
   }, [settings])
 
   const handleReset = useCallback(() => {
-    setSettings({ ...DEFAULT_SETTINGS })
+    setSettings(getDefaultComfyUISettings())
     setTestResult(null)
     setValidationResult(null)
     setSaveMessage('Settings reset to defaults.')

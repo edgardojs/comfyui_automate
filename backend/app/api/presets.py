@@ -5,7 +5,6 @@ Presets store attribute selections and generation configuration so users
 can quickly reload their favorite combinations.
 """
 
-import json
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
@@ -22,8 +21,8 @@ def _row_to_preset(row: PresetRow) -> Preset:
     return Preset(
         preset_id=row.preset_id,  # type: ignore[arg-type]
         name=row.name,  # type: ignore[arg-type]
-        attributes=json.loads(row.attributes_json),  # type: ignore[arg-type]
-        locked_fields=json.loads(row.locked_fields_json),  # type: ignore[arg-type]
+        attributes=row.attributes,  # type: ignore[arg-type]
+        locked_fields=row.locked_fields,  # type: ignore[arg-type]
         positive_template_id=row.positive_template_id,  # type: ignore[arg-type]
         negative_profile_id=row.negative_profile_id,  # type: ignore[arg-type]
         created_at=row.created_at,  # type: ignore[arg-type]
@@ -59,8 +58,8 @@ async def create_preset(
     row = PresetRow(
         preset_id=preset.preset_id,
         name=preset.name,
-        attributes_json=json.dumps(preset.attributes),
-        locked_fields_json=json.dumps(preset.locked_fields),
+        attributes=preset.attributes,
+        locked_fields=preset.locked_fields,
         positive_template_id=preset.positive_template_id,
         negative_profile_id=preset.negative_profile_id,
     )

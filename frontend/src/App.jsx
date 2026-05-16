@@ -5,7 +5,10 @@ import PromptResults from './components/PromptResults'
 import PresetManager from './components/PresetManager'
 import PromptHistory from './components/PromptHistory'
 import ComfyUISettings from './pages/ComfyUISettings'
+import CharactersPage from './pages/CharactersPage'
+import ErrorBoundary from './components/ErrorBoundary'
 import { generatePrompts, submitToComfyUI } from './api/client'
+import { loadComfyUISettings } from './api/comfyuiSettings'
 
 /**
  * App — Root component for the Sprite Prompt Generator.
@@ -105,24 +108,26 @@ function App() {
       await navigator.clipboard.writeText(text)
       showToast(`${label} copied!`)
     } catch {
-      const textarea = document.createElement('textarea')
-      textarea.value = text
-      document.body.appendChild(textarea)
-      textarea.select()
-      document.execCommand('copy')
-      document.body.removeChild(textarea)
-      showToast(`${label} copied!`)
+      // Fallback for older browsers or non-HTTPS contexts
+      try {
+        const textarea = document.createElement('textarea')
+        textarea.value = text
+        textarea.style.position = 'fixed'
+        textarea.style.opacity = '0'
+        document.body.appendChild(textarea)
+        textarea.select()
+        document.execCommand('copy')
+        document.body.removeChild(textarea)
+        showToast(`${label} copied!`)
+      } catch {
+        showToast(`❌ Copy failed — please copy manually`)
+      }
     }
   }, [showToast])
 
   const handleSendToComfyUI = useCallback(async (item) => {
-    // Load settings from localStorage
-    let settings
-    try {
-      settings = JSON.parse(localStorage.getItem('comfyui_settings') || '{}')
-    } catch {
-      settings = {}
-    }
+    // Load settings using the shared utility (consistent with ComfyUISettings page)
+    const settings = loadComfyUISettings()
 
     if (!settings.serverUrl || !settings.workflowJson || !settings.positiveNodeId) {
       showToast('⚠️ Configure ComfyUI settings first (Settings page)')
@@ -195,12 +200,14 @@ function App() {
   // --- Navigation items ---
   const navItems = [
     { id: 'generate', label: 'Generate', icon: '🎲' },
+    { id: 'characters', label: 'Characters', icon: '🧙' },
     { id: 'presets', label: 'Presets', icon: '💾' },
     { id: 'history', label: 'History', icon: '📜' },
     { id: 'settings', label: 'Settings', icon: '⚙️' },
   ]
 
   return (
+    <ErrorBoundary>
     <div className="min-h-screen bg-gray-950 text-gray-100">
       {/* Header */}
       <header className="sticky top-0 z-30 border-b border-gray-800 bg-gray-900/95 backdrop-blur-sm px-6 py-3">
@@ -269,6 +276,10 @@ function App() {
           </div>
         )}
 
+        {currentPage === 'characters' && (
+          <CharactersPage showToast={showToast} />
+        )}
+
         {currentPage === 'presets' && (
           <PresetManager
             currentAttributes={attributes}
@@ -304,6 +315,7 @@ function App() {
         </div>
       )}
     </div>
+    </ErrorBoundary>
   )
 }
 
