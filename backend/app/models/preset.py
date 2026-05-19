@@ -81,6 +81,8 @@ class PresetCreate(BaseModel):
 class PresetUpdate(BaseModel):
     """Request body for updating an existing preset."""
 
+    model_config = {"extra": "forbid"}
+
     name: str | None = Field(default=None, description="Updated name")
     attributes: dict[str, str | None] | None = Field(
         default=None, description="Updated attributes"

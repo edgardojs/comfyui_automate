@@ -14,7 +14,7 @@ import { loadComfyUISettings, saveComfyUISettings, getDefaultComfyUISettings } f
  * ComfyUI is entirely optional — the prompt generator works without it.
  */
 
-function ComfyUISettings() {
+function ComfyUISettings({ onSettingsChange }) {
   const [settings, setSettings] = useState(loadComfyUISettings)
   const [testResult, setTestResult] = useState(null)
   const [isTesting, setIsTesting] = useState(false)
@@ -25,15 +25,24 @@ function ComfyUISettings() {
 
   // Debounced auto-save: only persist to localStorage after 500ms of inactivity
   const saveTimerRef = useRef(null)
+  // Track save message timer to clear on unmount
+  const saveMsgTimerRef = useRef(null)
+  useEffect(() => {
+    return () => {
+      if (saveMsgTimerRef.current) clearTimeout(saveMsgTimerRef.current)
+    }
+  }, [])
   useEffect(() => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
     saveTimerRef.current = setTimeout(() => {
       saveComfyUISettings(settings)
+      // Sync settings up to App-level state
+      if (onSettingsChange) onSettingsChange(settings)
     }, 500)
     return () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
     }
-  }, [settings])
+  }, [settings, onSettingsChange])
 
   const handleChange = useCallback((field, value) => {
     setSettings(prev => ({ ...prev, [field]: value }))
@@ -97,9 +106,15 @@ function ComfyUISettings() {
     reader.onload = (event) => {
       const text = event.target?.result
       if (typeof text === 'string') {
-        // Validate it's parseable JSON
+        // Validate it's parseable JSON with basic ComfyUI structure
         try {
-          JSON.parse(text)
+          const parsed = JSON.parse(text)
+          // Basic structure check: ComfyUI workflows should be objects
+          // (API format has node IDs as keys, UI format has "nodes"/"links")
+          if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+            setFileError('The file is valid JSON but does not appear to be a ComfyUI workflow (expected an object).')
+            return
+          }
           setSettings(prev => ({ ...prev, workflowJson: text }))
         } catch {
           setFileError('The uploaded file is not valid JSON.')
@@ -114,17 +129,22 @@ function ComfyUISettings() {
 
   const handleSave = useCallback(() => {
     saveComfyUISettings(settings)
+    if (onSettingsChange) onSettingsChange(settings)
     setSaveMessage('Settings saved!')
-    setTimeout(() => setSaveMessage(''), 2000)
-  }, [settings])
+    if (saveMsgTimerRef.current) clearTimeout(saveMsgTimerRef.current)
+    saveMsgTimerRef.current = setTimeout(() => setSaveMessage(''), 2000)
+  }, [settings, onSettingsChange])
 
   const handleReset = useCallback(() => {
-    setSettings(getDefaultComfyUISettings())
+    const defaults = getDefaultComfyUISettings()
+    setSettings(defaults)
+    if (onSettingsChange) onSettingsChange(defaults)
     setTestResult(null)
     setValidationResult(null)
     setSaveMessage('Settings reset to defaults.')
-    setTimeout(() => setSaveMessage(''), 2000)
-  }, [])
+    if (saveMsgTimerRef.current) clearTimeout(saveMsgTimerRef.current)
+    saveMsgTimerRef.current = setTimeout(() => setSaveMessage(''), 2000)
+  }, [onSettingsChange])
 
   return (
     <div className="space-y-6 max-w-3xl">

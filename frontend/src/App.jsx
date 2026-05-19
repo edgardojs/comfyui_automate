@@ -9,6 +9,7 @@ import CharactersPage from './pages/CharactersPage'
 import ErrorBoundary from './components/ErrorBoundary'
 import { generatePrompts, submitToComfyUI } from './api/client'
 import { loadComfyUISettings } from './api/comfyuiSettings'
+import PoseBatchGenerator from './components/PoseBatchGenerator'
 
 /**
  * App — Root component for the Sprite Prompt Generator.
@@ -33,6 +34,12 @@ function App() {
   const [templateId, setTemplateId] = useState('front_view_sprite')
   const [negativeProfileId, setNegativeProfileId] = useState('general_sprite_cleanup')
 
+  // --- LoRA state ---
+  const [loraSelection, setLoraSelection] = useState(null) // { jobId, characterId, characterName, triggerToken, recommendedStrength }
+
+  // --- Generate mode tab ---
+  const [generateMode, setGenerateMode] = useState('single') // 'single' or 'batch'
+
   // --- Results state ---
   const [results, setResults] = useState(null)
   const [isGenerating, setIsGenerating] = useState(false)
@@ -45,6 +52,10 @@ function App() {
   // --- ComfyUI state ---
   const [comfyUISubmitting, setComfyUISubmitting] = useState(false)
   const [comfyUIResult, setComfyUIResult] = useState(null) // { index, success, message, promptId }
+
+  // Lift ComfyUI settings to App-level state so handleSendToComfyUI
+  // doesn't need to read from localStorage on every call
+  const [comfyUISettings, setComfyUISettings] = useState(() => loadComfyUISettings())
 
   useEffect(() => {
     return () => {
@@ -81,6 +92,7 @@ function App() {
     setLockedFields([])
     setResults(null)
     setError(null)
+    setLoraSelection(null)
   }, [])
 
   const handleGenerate = useCallback(async () => {
@@ -93,6 +105,7 @@ function App() {
         lockedFields,
         templateId,
         negativeProfileId,
+        loraTriggerToken: loraSelection?.triggerToken || undefined,
       })
       setResults(response)
     } catch (err) {
@@ -101,7 +114,7 @@ function App() {
     } finally {
       setIsGenerating(false)
     }
-  }, [attributes, variationCount, lockedFields, templateId, negativeProfileId])
+  }, [attributes, variationCount, lockedFields, templateId, negativeProfileId, loraSelection])
 
   const handleCopy = useCallback(async (text, label = 'Prompt') => {
     try {
@@ -126,8 +139,8 @@ function App() {
   }, [showToast])
 
   const handleSendToComfyUI = useCallback(async (item) => {
-    // Load settings using the shared utility (consistent with ComfyUISettings page)
-    const settings = loadComfyUISettings()
+    // Use App-level state instead of reading from localStorage on every call
+    const settings = comfyUISettings
 
     if (!settings.serverUrl || !settings.workflowJson || !settings.positiveNodeId) {
       showToast('⚠️ Configure ComfyUI settings first (Settings page)')
@@ -167,7 +180,8 @@ function App() {
         nodeMapping,
       })
 
-      const index = results?.items?.indexOf(item) ?? 0
+      // Use stable index based on positive_prompt content instead of object reference
+      const index = results?.items?.findIndex(i => i.positive_prompt === item.positive_prompt) ?? 0
       setComfyUIResult({
         index,
         success: result.success,
@@ -176,7 +190,7 @@ function App() {
       })
       showToast(result.success ? '🚀 Sent to ComfyUI!' : '❌ ComfyUI submission failed')
     } catch (err) {
-      const index = results?.items?.indexOf(item) ?? 0
+      const index = results?.items?.findIndex(i => i.positive_prompt === item.positive_prompt) ?? 0
       setComfyUIResult({
         index,
         success: false,
@@ -187,7 +201,7 @@ function App() {
     } finally {
       setComfyUISubmitting(false)
     }
-  }, [showToast, results])
+  }, [showToast, results, comfyUISettings])
 
   const handleLoadPreset = useCallback(({ attributes: attrs, lockedFields: locks, templateId: tmpl, negativeProfileId: prof }) => {
     setAttributes(attrs)
@@ -248,11 +262,38 @@ function App() {
                 onLockToggle={handleLockToggle}
                 onRandomizeAll={handleRandomizeAll}
                 onClearAll={handleClearAll}
+                loraSelection={loraSelection}
+                onLoRAChange={setLoraSelection}
               />
             </aside>
 
             {/* Prompt Options & Results */}
             <section className="flex flex-col gap-6 lg:col-span-2">
+              {/* Mode Tabs */}
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setGenerateMode('single')}
+                  className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors cursor-pointer ${
+                    generateMode === 'single'
+                      ? 'bg-indigo-600 text-white'
+                      : 'bg-gray-800 text-gray-400 hover:text-white hover:bg-gray-700 border border-gray-700'
+                  }`}
+                >
+                  🎲 Single Generate
+                </button>
+                <button
+                  onClick={() => setGenerateMode('batch')}
+                  className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors cursor-pointer ${
+                    generateMode === 'batch'
+                      ? 'bg-indigo-600 text-white'
+                      : 'bg-gray-800 text-gray-400 hover:text-white hover:bg-gray-700 border border-gray-700'
+                  }`}
+                >
+                  🎭 Pose Batch
+                </button>
+              </div>
+
+              {generateMode === 'single' ? (<>
               <PromptOptions
                 variationCount={variationCount}
                 templateId={templateId}
@@ -271,7 +312,20 @@ function App() {
                 onSendToComfyUI={handleSendToComfyUI}
                 comfyUISubmitting={comfyUISubmitting}
                 comfyUIResult={comfyUIResult}
+                loraTriggerToken={loraSelection?.triggerToken || null}
               />
+              </>) : (
+              <PoseBatchGenerator
+                loraSelection={loraSelection}
+                attributes={attributes}
+                lockedFields={lockedFields}
+                templateId={templateId}
+                negativeProfileId={negativeProfileId}
+                characterName={loraSelection?.characterName || null}
+                onCopy={handleCopy}
+                showToast={showToast}
+              />
+              )}
             </section>
           </div>
         )}
@@ -299,7 +353,7 @@ function App() {
         )}
 
         {currentPage === 'settings' && (
-          <ComfyUISettings />
+          <ComfyUISettings onSettingsChange={setComfyUISettings} />
         )}
       </main>
 

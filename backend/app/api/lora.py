@@ -25,12 +25,21 @@ from app.core.training_runner import (
     wait_for_training,
 )
 from app.db.database import CharacterProfileRow, LoraJobRow, ReferenceImageRow, get_session
+from fastapi import Query
+
 from app.models.lora import (
+    GeneratePreviewsResponse,
+    ListPreviewsResponse,
     LoRAJob,
     LoRAJobStatus,
     LoRAJobSummary,
     LoRATrainingConfig,
     LoRATrainingConfigCreate,
+    PreviewError,
+    PreviewFile,
+    PreviewSubmission,
+    TrainingJobLogsResponse,
+    TrainingJobStatusResponse,
     _generate_job_id,
 )
 
@@ -48,11 +57,11 @@ def _row_to_job(row: LoraJobRow) -> LoRAJob:
         character_id=row.character_id,  # type: ignore[arg-type]
         preset_id=row.preset_id,  # type: ignore[arg-type]
         base_model=row.base_model,  # type: ignore[arg-type]
-        learning_rate=float(row.learning_rate),  # type: ignore[arg-type]
+        learning_rate=row.learning_rate,  # type: ignore[arg-type]
         epochs=row.epochs,  # type: ignore[arg-type]
         preview_interval=row.preview_interval,  # type: ignore[arg-type]
         output_format=row.output_format,  # type: ignore[arg-type]
-        lora_strength=float(row.lora_strength),  # type: ignore[arg-type]
+        lora_strength=row.lora_strength,  # type: ignore[arg-type]
         custom_args=row.custom_args,  # type: ignore[arg-type]
     )
     return LoRAJob(
@@ -67,14 +76,17 @@ def _row_to_job(row: LoraJobRow) -> LoRAJob:
     )
 
 
-def _row_to_summary(row: LoraJobRow) -> LoRAJobSummary:
+def _row_to_summary(row: LoraJobRow, character_name: str | None = None, trigger_token: str | None = None) -> LoRAJobSummary:
     """Convert a LoraJobRow ORM object to a LoRAJobSummary."""
     return LoRAJobSummary(
         job_id=row.job_id,  # type: ignore[arg-type]
         character_id=row.character_id,  # type: ignore[arg-type]
+        character_name=character_name,
+        trigger_token=trigger_token,
         preset_id=row.preset_id,  # type: ignore[arg-type]
-        learning_rate=float(row.learning_rate),  # type: ignore[arg-type]
+        learning_rate=row.learning_rate,  # type: ignore[arg-type]
         epochs=row.epochs,  # type: ignore[arg-type]
+        lora_strength=row.lora_strength,  # type: ignore[arg-type]
         status=LoRAJobStatus(row.status),  # type: ignore[arg-type]
         output_lora_path=row.output_lora_path,  # type: ignore[arg-type]
         created_at=row.created_at,  # type: ignore[arg-type]
@@ -163,11 +175,11 @@ async def create_lora_job(
         character_id=body.character_id,
         preset_id=config.preset_id,
         base_model=config.base_model,
-        learning_rate=str(config.learning_rate),
+        learning_rate=config.learning_rate,
         epochs=config.epochs,
         preview_interval=config.preview_interval,
         output_format=config.output_format,
-        lora_strength=str(config.lora_strength),
+        lora_strength=config.lora_strength,
         custom_args=config.custom_args,
         status="pending",
         created_at=now,
@@ -216,7 +228,26 @@ async def list_lora_jobs(
 
     result = await session.execute(stmt)
     rows = result.scalars().all()
-    return [_row_to_summary(row) for row in rows]
+
+    # Batch-fetch character profiles to avoid N+1 queries
+    char_ids = {row.character_id for row in rows if row.character_id}
+    char_map: dict[str, CharacterProfileRow] = {}
+    if char_ids:
+        char_result = await session.execute(
+            select(CharacterProfileRow).where(
+                CharacterProfileRow.character_id.in_(char_ids)
+            )
+        )
+        char_map = {c.character_id: c for c in char_result.scalars().all()}
+
+    summaries = []
+    for row in rows:
+        char_row = char_map.get(row.character_id) if row.character_id else None
+        character_name = char_row.character_name if char_row else None
+        trigger_token = char_row.trigger_token if char_row else None
+        summaries.append(_row_to_summary(row, character_name=character_name, trigger_token=trigger_token))
+
+    return summaries
 
 
 # ---------------------------------------------------------------------------
@@ -342,11 +373,11 @@ async def start_lora_job(
         character_id=row.character_id,  # type: ignore[arg-type]
         preset_id=row.preset_id,  # type: ignore[arg-type]
         base_model=row.base_model,  # type: ignore[arg-type]
-        learning_rate=float(row.learning_rate),  # type: ignore[arg-type]
+        learning_rate=row.learning_rate,  # type: ignore[arg-type]
         epochs=row.epochs,  # type: ignore[arg-type]
         preview_interval=row.preview_interval,  # type: ignore[arg-type]
         output_format=row.output_format,  # type: ignore[arg-type]
-        lora_strength=float(row.lora_strength),  # type: ignore[arg-type]
+        lora_strength=row.lora_strength,  # type: ignore[arg-type]
         custom_args=row.custom_args,  # type: ignore[arg-type]
     )
 
@@ -469,7 +500,7 @@ async def cancel_lora_job(
 async def get_training_job_status(
     job_id: str,
     session: AsyncSession = Depends(get_session),
-) -> dict:
+) -> TrainingJobStatusResponse:
     """Get real-time training status for a job."""
     # Verify job exists
     result = await session.execute(
@@ -485,13 +516,13 @@ async def get_training_job_status(
     # Get process status
     process_status = get_training_status(job_id)
 
-    return {
-        "job_id": job_id,
-        "status": row.status,
-        "is_running": process_status["is_running"],
-        "pid": process_status["pid"],
-        "log_path": process_status.get("log_path"),
-    }
+    return TrainingJobStatusResponse(
+        job_id=job_id,
+        status=row.status,
+        is_running=process_status["is_running"],
+        pid=process_status.get("pid"),
+        log_path=process_status.get("log_path"),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -510,9 +541,9 @@ async def get_training_job_status(
 )
 async def get_training_job_logs(
     job_id: str,
-    tail: int = 100,
+    tail: int = Query(default=100, ge=1, le=10000),
     session: AsyncSession = Depends(get_session),
-) -> dict:
+) -> TrainingJobLogsResponse:
     """Get training log output for a job."""
     # Verify job exists
     result = await session.execute(
@@ -533,11 +564,11 @@ async def get_training_job_logs(
         lines = row.log_output.splitlines()
         log_content = "\n".join(lines[-tail:])
 
-    return {
-        "job_id": job_id,
-        "logs": log_content or "",
-        "tail": tail,
-    }
+    return TrainingJobLogsResponse(
+        job_id=job_id,
+        logs=log_content or "",
+        tail=tail,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -578,13 +609,13 @@ async def generate_previews(
     job_id: str,
     server_url: str,
     negative_prompt: str | None = None,
-    width: int = 512,
-    height: int = 512,
-    steps: int = 20,
-    cfg: float = 7.0,
+    width: int = Query(default=512, ge=64, le=2048),
+    height: int = Query(default=512, ge=64, le=2048),
+    steps: int = Query(default=20, ge=1, le=150),
+    cfg: float = Query(default=7.0, ge=1.0, le=30.0),
     seed: int | None = None,
     session: AsyncSession = Depends(get_session),
-) -> dict:
+) -> GeneratePreviewsResponse:
     """Generate preview images for a completed LoRA training job.
 
     Parameters
@@ -713,34 +744,34 @@ async def generate_previews(
                 )
                 if response.status_code == 200:
                     data = response.json()
-                    submitted.append({
-                        "preview_name": preview_name,
-                        "prompt": preview_prompt,
-                        "view": preview_view,
-                        "pose": preview_pose,
-                        "prompt_id": data.get("prompt_id"),
-                        "number": data.get("number"),
-                    })
+                    submitted.append(PreviewSubmission(
+                        preview_name=preview_name,
+                        prompt=preview_prompt,
+                        view=preview_view,
+                        pose=preview_pose,
+                        prompt_id=data.get("prompt_id"),
+                        number=data.get("number"),
+                    ))
                 else:
-                    errors.append({
-                        "preview_name": preview_name,
-                        "error": f"ComfyUI returned HTTP {response.status_code}",
-                    })
-            except (httpx.ConnectError, httpx.TimeoutException) as exc:
-                errors.append({
-                    "preview_name": preview_name,
-                    "error": f"ComfyUI connection error: {type(exc).__name__}",
-                })
+                    errors.append(PreviewError(
+                        preview_name=preview_name,
+                        error=f"ComfyUI returned HTTP {response.status_code}",
+                    ))
+            except Exception as exc:
+                errors.append(PreviewError(
+                    preview_name=preview_name,
+                    error=f"ComfyUI error: {type(exc).__name__}: {exc}",
+                ))
 
-    return {
-        "job_id": job_id,
-        "lora_path": lora_path,
-        "submitted": submitted,
-        "errors": errors,
-        "total": len(workflows),
-        "successful": len(submitted),
-        "failed": len(errors),
-    }
+    return GeneratePreviewsResponse(
+        job_id=job_id,
+        lora_path=lora_path,
+        submitted=submitted,
+        errors=errors,
+        total=len(workflows),
+        successful=len(submitted),
+        failed=len(errors),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -761,7 +792,7 @@ async def generate_previews(
 async def list_preview_images(
     job_id: str,
     session: AsyncSession = Depends(get_session),
-) -> dict:
+) -> ListPreviewsResponse:
     """List preview images for a LoRA training job."""
     from app.core.storage import get_previews_dir
 
@@ -789,25 +820,23 @@ async def list_preview_images(
             detail=f"Character profile '{row.character_id}' not found",
         )
 
-    # List preview images
+    # List preview images (return filenames only, not full server paths)
     previews_dir = get_previews_dir(char_row.project_name, char_row.character_name)
-    preview_files = []
+    preview_files: list[PreviewFile] = []
     if previews_dir.exists():
         for ext in ["*.png", "*.jpg", "*.jpeg", "*.webp"]:
             for f in sorted(previews_dir.glob(ext)):
-                preview_files.append({
-                    "filename": f.name,
-                    "path": str(f),
-                    "size": f.stat().st_size,
-                })
+                preview_files.append(PreviewFile(
+                    filename=f.name,
+                    size=f.stat().st_size,
+                ))
 
-    return {
-        "job_id": job_id,
-        "character_id": row.character_id,
-        "previews_dir": str(previews_dir),
-        "previews": preview_files,
-        "total": len(preview_files),
-    }
+    return ListPreviewsResponse(
+        job_id=job_id,
+        character_id=row.character_id,
+        previews=preview_files,
+        total=len(preview_files),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -912,7 +941,10 @@ async def get_lora_metadata(
 )
 async def export_lora_to_comfyui(
     job_id: str,
-    comfyui_lora_dir: str,
+    comfyui_lora_dir: str = Query(
+        ...,
+        description="Path to ComfyUI's models/loras/ directory",
+    ),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """Export a trained LoRA to ComfyUI's models directory.
@@ -926,6 +958,24 @@ async def export_lora_to_comfyui(
     session:
         Async database session.
     """
+    from pathlib import Path as PathLib
+
+    # Validate comfyui_lora_dir to prevent arbitrary file write
+    comfyui_path = PathLib(comfyui_lora_dir).resolve()
+    if not comfyui_path.is_dir():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Directory does not exist: {comfyui_lora_dir}",
+        )
+    # Only allow directories under common ComfyUI paths or user-specified paths
+    # Must contain 'models' or 'loras' in the path to prevent writing to arbitrary dirs
+    path_str = str(comfyui_path)
+    if "models" not in path_str.lower().split(PathLib.sep) and "loras" not in path_str.lower().split(PathLib.sep):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Export directory must be within a ComfyUI models/loras/ directory",
+        )
+
     from app.core.lora_exporter import export_to_comfyui
     from app.core.lora_metadata import generate_lora_metadata, save_lora_metadata
 
@@ -977,8 +1027,6 @@ async def export_lora_to_comfyui(
         )
 
     # Generate and save metadata if not already present
-    from pathlib import Path as PathLib
-
     lora_path_obj = PathLib(lora_path)
     metadata_path = lora_path_obj.with_suffix(".json")
     if not metadata_path.exists():
@@ -1014,9 +1062,8 @@ async def export_lora_to_comfyui(
 
     return {
         "job_id": job_id,
-        "lora_path": lora_path,
-        "export_path": str(export_path),
-        "comfyui_lora_dir": comfyui_lora_dir,
+        "filename": PathLib(lora_path).name,
+        "export_filename": PathLib(export_path).name,
         "exported": True,
     }
 

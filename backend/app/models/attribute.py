@@ -13,6 +13,8 @@ class Attribute(BaseModel):
     assembling a prompt.
     """
 
+    model_config = {"extra": "forbid"}
+
     id: str = Field(
         ..., min_length=1, max_length=255,
         description="Unique identifier for the attribute, e.g. 'rogue'"

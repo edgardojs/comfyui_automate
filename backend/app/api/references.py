@@ -109,11 +109,15 @@ async def upload_references(
         )
 
     created: list[ReferenceImage] = []
+    saved_paths: list[Path] = []
 
     for upload in files:
         # Validate extension
         ext = Path(upload.filename or "").suffix.lower()
         if ext not in ALLOWED_IMAGE_EXTENSIONS:
+            # Clean up any already-saved files before raising
+            for p in saved_paths:
+                p.unlink(missing_ok=True)
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=(
@@ -125,6 +129,9 @@ async def upload_references(
         # Read file content with size limit
         file_content = await upload.read(MAX_FILE_SIZE + 1)
         if len(file_content) > MAX_FILE_SIZE:
+            # Clean up any already-saved files before raising
+            for p in saved_paths:
+                p.unlink(missing_ok=True)
             raise HTTPException(
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                 detail=(
@@ -135,6 +142,9 @@ async def upload_references(
 
         # Validate file content matches the claimed extension (magic bytes)
         if not validate_image_content(file_content, ext):
+            # Clean up any already-saved files before raising
+            for p in saved_paths:
+                p.unlink(missing_ok=True)
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=(
@@ -154,6 +164,7 @@ async def upload_references(
             project_name=character.project_name,  # type: ignore[arg-type]
             character_name=character.character_name,  # type: ignore[arg-type]
         )
+        saved_paths.append(saved_path)
 
         # Persist record in database
         image_id = _generate_image_id()
@@ -170,7 +181,14 @@ async def upload_references(
         session.add(row)
         created.append(row)
 
-    await session.commit()
+    try:
+        await session.commit()
+    except Exception:
+        # Clean up all saved files if DB commit fails
+        for p in saved_paths:
+            p.unlink(missing_ok=True)
+        await session.rollback()
+        raise
 
     # Refresh all created rows to get DB-populated defaults
     for row in created:

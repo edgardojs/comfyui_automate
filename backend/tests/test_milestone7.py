@@ -322,7 +322,7 @@ class TestStorage:
         """delete_reference_image should remove a single file."""
         path = save_reference_image(
             character_id="char_123",
-            file_content=b"data",
+            file_content=b"\x89PNG\r\n\x1a\n" + b"\x00" * 50,
             original_filename="test.png",
             project_name="test_project",
             character_name="Hero",

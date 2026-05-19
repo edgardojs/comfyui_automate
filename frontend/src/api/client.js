@@ -36,6 +36,8 @@ async function fetchWithTimeout(url, options = {}, timeout = DEFAULT_TIMEOUT) {
  * @throws {Error} If response is not valid JSON or body is empty
  */
 async function safeJson(res) {
+  // Allow empty bodies for 204 No Content responses
+  if (res.status === 204) return {}
   const text = await res.text();
   if (!text) {
     throw new Error(`Empty response body (HTTP ${res.status})`);
@@ -48,6 +50,25 @@ async function safeJson(res) {
 }
 
 /**
+ * Centralized error handler for API responses.
+ * Parses error details from the response body when available.
+ * @param {Response} res - Fetch Response object
+ * @param {string} action - Description of the action for error messages
+ * @throws {Error} With parsed detail from the server or a generic message
+ */
+async function handleApiError(res, action) {
+  let detail = ''
+  try {
+    const body = await safeJson(res)
+    detail = body.detail || body.message || ''
+  } catch {
+    // If we can't parse the error body, use status text
+    detail = res.statusText || ''
+  }
+  throw new Error(detail || `${action} failed (HTTP ${res.status})`)
+}
+
+/**
  * Fetch the full attribute library.
  * @param {string} [category] - Optional category filter (e.g. "classes")
  * @returns {Promise<object>} The attribute library or filtered category
@@ -57,7 +78,7 @@ export async function fetchAttributes(category) {
     ? `${API_BASE}/attributes?category=${encodeURIComponent(category)}`
     : `${API_BASE}/attributes`;
   const res = await fetchWithTimeout(url);
-  if (!res.ok) throw new Error(`Failed to fetch attributes: ${res.status}`);
+  if (!res.ok) await handleApiError(res, 'Fetch attributes');
   return safeJson(res);
 }
 
@@ -67,7 +88,7 @@ export async function fetchAttributes(category) {
  */
 export async function fetchTemplates() {
   const res = await fetchWithTimeout(`${API_BASE}/templates`);
-  if (!res.ok) throw new Error(`Failed to fetch templates: ${res.status}`);
+  if (!res.ok) await handleApiError(res, 'Fetch templates');
   return safeJson(res);
 }
 
@@ -77,7 +98,7 @@ export async function fetchTemplates() {
  */
 export async function fetchNegativeProfiles() {
   const res = await fetchWithTimeout(`${API_BASE}/negative-profiles`);
-  if (!res.ok) throw new Error(`Failed to fetch negative profiles: ${res.status}`);
+  if (!res.ok) await handleApiError(res, 'Fetch negative profiles');
   return safeJson(res);
 }
 
@@ -97,19 +118,24 @@ export async function generatePrompts({
   lockedFields = [],
   templateId,
   negativeProfileId,
+  loraTriggerToken,
 }) {
+  const body = {
+    attributes,
+    variation_count: variationCount,
+    locked_fields: lockedFields,
+    template_id: templateId,
+    negative_profile_id: negativeProfileId,
+  };
+  if (loraTriggerToken) {
+    body.lora_trigger_token = loraTriggerToken;
+  }
   const res = await fetchWithTimeout(`${API_BASE}/prompts/generate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      attributes,
-      variation_count: variationCount,
-      locked_fields: lockedFields,
-      template_id: templateId,
-      negative_profile_id: negativeProfileId,
-    }),
+    body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`Failed to generate prompts: ${res.status}`);
+  if (!res.ok) await handleApiError(res, 'Generate prompts');
   return safeJson(res);
 }
 
@@ -124,7 +150,7 @@ export async function savePreset(preset) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(preset),
   });
-  if (!res.ok) throw new Error(`Failed to save preset: ${res.status}`);
+  if (!res.ok) await handleApiError(res, 'Save preset');
   return safeJson(res);
 }
 
@@ -134,7 +160,7 @@ export async function savePreset(preset) {
  */
 export async function fetchPresets() {
   const res = await fetchWithTimeout(`${API_BASE}/presets`);
-  if (!res.ok) throw new Error(`Failed to fetch presets: ${res.status}`);
+  if (!res.ok) await handleApiError(res, 'Fetch presets');
   return safeJson(res);
 }
 
@@ -147,7 +173,7 @@ export async function deletePreset(presetId) {
   const res = await fetchWithTimeout(`${API_BASE}/presets/${encodeURIComponent(presetId)}`, {
     method: "DELETE",
   });
-  if (!res.ok) throw new Error(`Failed to delete preset: ${res.status}`);
+  if (!res.ok) await handleApiError(res, 'Delete preset');
 }
 
 /**
@@ -164,7 +190,7 @@ export async function fetchHistory({ limit = 20, offset = 0 } = {}) {
   const qs = params.toString();
   const url = qs ? `${API_BASE}/history?${qs}` : `${API_BASE}/history`;
   const res = await fetchWithTimeout(url);
-  if (!res.ok) throw new Error(`Failed to fetch history: ${res.status}`);
+  if (!res.ok) await handleApiError(res, 'Fetch history');
   return safeJson(res);
 }
 
@@ -795,4 +821,62 @@ export async function fetchWorkflowTemplate(characterId, options = {}) {
   const res = await fetchWithTimeout(url)
   if (!res.ok) throw new Error(`Failed to fetch workflow template: ${res.status}`)
   return safeJson(res)
+}
+
+// ---------------------------------------------------------------------------
+// Pose Batch API
+// ---------------------------------------------------------------------------
+
+/**
+ * Fetch available pose batch templates.
+ * @returns {Promise<object>} Pose batch templates list
+ */
+export async function fetchPoseBatches() {
+  const res = await fetchWithTimeout(`${API_BASE}/pose-batches`);
+  if (!res.ok) throw new Error(`Failed to fetch pose batches: ${res.status}`);
+  return safeJson(res);
+}
+
+/**
+ * Generate a pose batch of prompt pairs.
+ * @param {object} params
+ * @param {string} [params.characterId] - Character profile ID (auto-fills trigger token & profile)
+ * @param {string} [params.loraTriggerToken] - LoRA trigger token to prepend
+ * @param {string} [params.batchId] - Predefined pose batch template ID
+ * @param {object[]} [params.poses] - Custom pose definitions [{name, pose}]
+ * @param {string[]} [params.views] - Custom view angles
+ * @param {object} [params.attributes] - Attribute selections
+ * @param {string[]} [params.lockedFields] - Locked attribute categories
+ * @param {string} [params.templateId] - Prompt template ID
+ * @param {string} [params.negativeProfileId] - Negative profile ID
+ * @param {string} [params.characterName] - Character name for output filename generation
+ * @returns {Promise<object>} Pose batch response with batch_id and items (each with output_name)
+ */
+export async function generatePoseBatch(params = {}) {
+  const body = {};
+  if (params.characterId) body.character_id = params.characterId;
+  if (params.loraTriggerToken) body.lora_trigger_token = params.loraTriggerToken;
+  if (params.batchId) body.batch_id = params.batchId;
+  if (params.poses) body.poses = params.poses;
+  if (params.views) body.views = params.views;
+  if (params.attributes) body.attributes = params.attributes;
+  if (params.lockedFields?.length) body.locked_fields = params.lockedFields;
+  if (params.templateId) body.template_id = params.templateId;
+  if (params.negativeProfileId) body.negative_profile_id = params.negativeProfileId;
+  if (params.characterName) body.character_name = params.characterName;
+
+  const res = await fetchWithTimeout(`${API_BASE}/prompts/generate-batch`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    let detail = `Failed to generate pose batch: ${res.status}`;
+    try {
+      const errBody = await res.json();
+      if (errBody.detail) detail = errBody.detail;
+    } catch { /* ignore */ }
+    throw new Error(detail);
+  }
+  return safeJson(res);
 }

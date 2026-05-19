@@ -114,6 +114,16 @@ async def create_character(
     character_id = _generate_character_id()
     now = datetime.now(timezone.utc)
 
+    # Create character directory structure on disk BEFORE committing to DB
+    # so that a disk failure doesn't leave an orphaned DB record
+    try:
+        get_character_dir(body.project_name, body.character_name)
+    except OSError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create character directory: {exc}",
+        )
+
     row = CharacterProfileRow(
         character_id=character_id,
         project_name=body.project_name,
@@ -142,9 +152,6 @@ async def create_character(
                    "Please provide a unique trigger_token.",
         )
     await session.refresh(row)
-
-    # Create character directory structure on disk
-    get_character_dir(body.project_name, body.character_name)
 
     return _row_to_profile(row)
 
@@ -266,9 +273,14 @@ async def update_character(
         row.animations = update_data["animations"]
         del update_data["animations"]
 
+    # Nullable fields that can be explicitly set to None to clear them
+    _nullable_fields = {"species", "character_class", "weapon", "armor", "art_style", "trigger_token"}
+
     # Apply remaining scalar fields
     for field, value in update_data.items():
-        if value is not None and field not in ("target_perspective", "animations"):
+        if field in ("target_perspective", "animations"):
+            continue
+        if value is not None or field in _nullable_fields:
             setattr(row, field, value)
 
     row.updated_at = datetime.now(timezone.utc)

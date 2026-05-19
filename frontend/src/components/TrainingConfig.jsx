@@ -122,14 +122,14 @@ function TrainingConfig({ characterId, showToast }) {
     setSelectedPresetId(presetId)
 
     if (presetId) {
-      const preset = presets.find(p => p.id === presetId)
+      const preset = presets.find(p => String(p.id) === presetId)
       if (preset) {
         setConfig({
           base_model: preset.base_model || config.base_model,
-          learning_rate: preset.learning_rate,
-          epochs: preset.epochs,
-          preview_interval: preset.preview_interval,
-          output_format: preset.output_format,
+          learning_rate: preset.learning_rate ?? config.learning_rate,
+          epochs: preset.epochs ?? config.epochs,
+          preview_interval: preset.preview_interval ?? config.preview_interval,
+          output_format: preset.output_format || config.output_format,
           lora_strength: config.lora_strength,
         })
       }

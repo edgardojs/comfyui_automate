@@ -174,6 +174,12 @@ def fill_unselected_attributes(
 
     result: dict[str, str] = {}
 
+    # Preserve any keys from partial_attributes that are not in the library
+    # (e.g., custom or future attributes) so they aren't silently dropped
+    for key, value in partial_attributes.items():
+        if value is not None and key not in {c.id for c in library.categories}:
+            result[key] = value
+
     for category in library.categories:
         cat_id = category.id
         current_value = partial_attributes.get(cat_id)
@@ -226,6 +232,12 @@ def generate_variations(
 
     if locked_fields is None:
         locked_fields = []
+
+    # Validate variation_count bounds
+    if variation_count < 1:
+        raise ValueError(f"variation_count must be >= 1, got {variation_count}")
+    if variation_count > 50:
+        raise ValueError(f"variation_count must be <= 50, got {variation_count}")
 
     variations: list[dict[str, str]] = []
 

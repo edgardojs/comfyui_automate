@@ -25,9 +25,20 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
+def _get_attr(obj: Any, key: str, default: Any = None) -> Any:
+    """Safely get an attribute from a dict or object.
+
+    Supports both dict-like (``obj.get(key)``) and attribute-based
+    (``obj.key``) access patterns.
+    """
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
+
+
 def generate_lora_metadata(
-    job: dict[str, Any],
-    character_profile: dict[str, Any],
+    job: dict[str, Any] | Any,
+    character_profile: dict[str, Any] | Any,
     dataset_count: int | None = None,
 ) -> dict[str, Any]:
     """Generate metadata for a trained LoRA model.
@@ -54,12 +65,12 @@ def generate_lora_metadata(
     dict[str, Any]
         A metadata dict suitable for serialization as JSON.
     """
-    project_name = character_profile.get("project_name", "UnknownProject")
-    character_name = character_profile.get("character_name", "UnknownCharacter")
-    trigger_token = character_profile.get("trigger_token", "")
-    art_style = character_profile.get("art_style") or "pixel art sprite"
-    species = character_profile.get("species") or ""
-    char_class = character_profile.get("character_class") or ""
+    project_name = _get_attr(character_profile, "project_name", "UnknownProject")
+    character_name = _get_attr(character_profile, "character_name", "UnknownCharacter")
+    trigger_token = _get_attr(character_profile, "trigger_token", "")
+    art_style = _get_attr(character_profile, "art_style") or "pixel art sprite"
+    species = _get_attr(character_profile, "species") or ""
+    char_class = _get_attr(character_profile, "character_class") or ""
 
     # Build the LoRA name: {Project}_{Character}_{Style}_v{N}
     # Version number will be determined by version_lora()
@@ -70,16 +81,20 @@ def generate_lora_metadata(
         version=1,
     )
 
-    # Build recommended prompt prefix
+    # Build recommended prompt prefix from non-empty fragments
+    prefix_parts: list[str] = []
+    if trigger_token:
+        prefix_parts.append(trigger_token)
     species_class = f"{species} {char_class}".strip()
-    recommended_prefix = f"{trigger_token}, {species_class} full body {art_style}".strip()
-    # Clean up double spaces
-    recommended_prefix = re.sub(r"\s+", " ", recommended_prefix).strip()
-    if recommended_prefix.startswith(","):
-        recommended_prefix = recommended_prefix.lstrip(", ").strip()
+    if species_class:
+        prefix_parts.append(species_class)
+    prefix_parts.append("full body")
+    if art_style:
+        prefix_parts.append(art_style)
+    recommended_prefix = ", ".join(prefix_parts)
 
     # Determine base model filename
-    base_model = job.get("base_model") or "stabilityai/stable-diffusion-xl-base-1.0"
+    base_model = _get_attr(job, "base_model") or "stabilityai/stable-diffusion-xl-base-1.0"
     base_model_filename = _model_to_filename(base_model)
 
     metadata = {
@@ -92,13 +107,13 @@ def generate_lora_metadata(
         "base_model": base_model,
         "base_model_filename": base_model_filename,
         "dataset_count": dataset_count or 0,
-        "learning_rate": float(job.get("learning_rate", 0.0002)),
-        "epochs": int(job.get("epochs", 18)),
-        "output_format": job.get("output_format", "safetensors"),
-        "lora_strength": float(job.get("lora_strength", 1.0)),
-        "preset_id": job.get("preset_id"),
+        "learning_rate": float(_get_attr(job, "learning_rate", 0.0002)),
+        "epochs": int(_get_attr(job, "epochs", 18)),
+        "output_format": _get_attr(job, "output_format", "safetensors"),
+        "lora_strength": float(_get_attr(job, "lora_strength", 1.0)),
+        "preset_id": _get_attr(job, "preset_id"),
         "created_at": datetime.now(timezone.utc).isoformat(),
-        "recommended_strength": float(job.get("lora_strength", 1.0)),
+        "recommended_strength": float(_get_attr(job, "lora_strength", 1.0)),
         "recommended_prompt_prefix": recommended_prefix,
         "art_style": art_style,
     }
@@ -130,10 +145,14 @@ def save_lora_metadata(
     lora_path = Path(lora_path)
     metadata_path = lora_path.with_suffix(".json")
 
-    metadata_path.write_text(
-        json.dumps(metadata, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
+    try:
+        metadata_path.write_text(
+            json.dumps(metadata, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        logger.error("Failed to save LoRA metadata to %s: %s", metadata_path, exc)
+        raise OSError(f"Failed to save LoRA metadata to {metadata_path}: {exc}") from exc
 
     logger.info("Saved LoRA metadata to %s", metadata_path)
     return metadata_path

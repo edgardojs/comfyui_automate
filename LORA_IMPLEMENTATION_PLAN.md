@@ -502,16 +502,16 @@ This means the module works even when ComfyUI is not running — you can create 
 ### Tasks
 
 #### 10.1 LoRA-Aware Prompt Generation (`backend/app/core/prompt_engine.py` — extend)
-- [ ] Extend `generate_positive_prompt()` to accept optional `lora_trigger_token`:
+- [x] Extend `generate_positive_prompt()` to accept optional `lora_trigger_token`:
   - If provided, prepend `{trigger_token}, ` to the prompt
   - Example: `dwarf_rogue_archer_edgardo_v1, 2D game sprite character, full body, front view, ...`
-- [ ] Add `generate_pose_batch(character_profile, lora_trigger_token, poses, views)`:
+- [x] Add `generate_pose_batch(character_profile, lora_trigger_token, poses, views)`:
   - Generate a list of prompt pairs for each pose × view combination
   - Example: idle_front, idle_side, walk_front_01, walk_front_02, attack_front, etc.
   - Return `PoseBatchResponse` with named prompts
 
 #### 10.2 Pose Batch Data (`backend/app/data/pose_batches.json`)
-- [ ] Define pose batch templates:
+- [x] Define pose batch templates:
   ```json
   {
     "batches": [
@@ -550,33 +550,44 @@ This means the module works even when ComfyUI is not running — you can create 
   ```
 
 #### 10.3 LoRA-Aware API Endpoints (`backend/app/api/prompts.py` — extend)
-- [ ] Extend `POST /api/prompts/generate` to accept optional `lora_trigger_token` field
-- [ ] `POST /api/prompts/generate-batch` — Generate a pose batch:
+- [x] Extend `POST /api/prompts/generate` to accept optional `lora_trigger_token` field
+- [x] `POST /api/prompts/generate-batch` — Generate a pose batch:
   - Accept: `character_id`, `lora_trigger_token`, `batch_id`, `attributes`, `locked_fields`
   - Return: list of named prompt pairs
-- [ ] `GET /api/pose-batches` — List available pose batch templates
+- [x] `GET /api/pose-batches` — List available pose batch templates
 
 #### 10.4 LoRA Selection in Prompt Generator UI (`frontend/src/components/AttributePanel.jsx` — extend)
-- [ ] Add "LoRA" dropdown in attribute panel:
+- [x] Add "LoRA" dropdown in attribute panel:
   - Fetches list of trained LoRAs from `GET /api/lora/jobs?status=completed`
   - Shows character name + version
   - When selected, auto-fills trigger token and recommended strength
-- [ ] Show LoRA trigger token in prompt results (prepended to positive prompt)
-- [ ] Show recommended LoRA strength (1.0–1.2)
+- [x] Show LoRA trigger token in prompt results (prepended to positive prompt)
+- [x] Show recommended LoRA strength (1.0–1.2)
 
 #### 10.5 Pose Batch Generator UI (`frontend/src/components/PoseBatchGenerator.jsx`)
-- [ ] Pose batch template selector
-- [ ] Preview of all prompts that will be generated
-- [ ] "Generate Batch" button
-- [ ] Results displayed as a grid of named prompt pairs
-- [ ] "Send All to ComfyUI" button (submits each prompt sequentially with delay)
-- [ ] "Copy All Prompts" button (copies all as JSON)
+- [x] Pose batch template selector
+- [x] Preview of all prompts that will be generated
+- [x] "Generate Batch" button
+- [x] Results displayed as a grid of named prompt pairs
+- [x] "Send All to ComfyUI" button (submits each prompt sequentially with delay)
+- [x] "Copy All Prompts" button (copies all as JSON)
 
 #### 10.6 Output Naming Convention
-- [ ] Implement `generate_output_name(character_name, pose_name, frame_number)`:
+- [x] Implement `generate_output_name(character_name, pose_name, frame_number)`:
   - Format: `{CharacterName}_{Pose}_{Direction}_{Frame:03d}.png`
   - Example: `DwarfRogueArcher_Walk_South_001.png`
-- [ ] Include output naming in batch generation response
+  - View-to-direction mapping: front→South, side→East, back→North, three-quarter→Southeast
+  - PascalCase conversion for character names and pose names (handles snake_case, kebab-case, spaces)
+  - Frame number zero-padded to 3 digits, minimum 1
+  - Optional custom file extension (default: png)
+  - Direction omitted when no view provided
+- [x] Include output naming in batch generation response
+  - `PoseBatchItem` model now includes `output_name` field
+  - `generate_pose_batch()` accepts `character_name` parameter
+  - API endpoint accepts `character_name` in request body
+  - Character name auto-filled from profile when `character_id` is provided
+  - Frontend displays output filename in batch results grid
+  - "Copy All as JSON" includes `output_name` in exported data
 
 ---
 

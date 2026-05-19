@@ -618,3 +618,272 @@ class TestHistoryFavorite:
         data = response.json()
         item = next(i for i in data["items"] if i["generation_id"] == gen_id)
         assert item["is_favorite"] is True
+
+
+# ---------------------------------------------------------------------------
+# POST /api/prompts/generate with lora_trigger_token
+# ---------------------------------------------------------------------------
+
+
+class TestGeneratePromptsLoRA:
+    """Tests for the lora_trigger_token field in POST /api/prompts/generate."""
+
+    @pytest.mark.asyncio
+    async def test_generate_with_lora_trigger_token(self, client: AsyncClient):
+        """Should prepend trigger token to positive prompt."""
+        response = await client.post(
+            "/api/prompts/generate",
+            json={"lora_trigger_token": "dwarf_rogue_v1"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["items"]) >= 1
+        for item in data["items"]:
+            assert item["positive_prompt"].startswith("dwarf_rogue_v1, ")
+
+    @pytest.mark.asyncio
+    async def test_generate_without_lora_trigger_token(self, client: AsyncClient):
+        """Should work normally when no trigger token is provided."""
+        response = await client.post("/api/prompts/generate", json={})
+        assert response.status_code == 200
+        data = response.json()
+        for item in data["items"]:
+            # Should not start with a trigger token pattern
+            assert not item["positive_prompt"].startswith("dwarf_rogue_v1, ")
+
+    @pytest.mark.asyncio
+    async def test_generate_variations_with_lora_trigger(self, client: AsyncClient):
+        """All variations should include the trigger token."""
+        response = await client.post(
+            "/api/prompts/generate",
+            json={
+                "lora_trigger_token": "elf_mage_v1",
+                "variation_count": 3,
+            },
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["items"]) == 3
+        for item in data["items"]:
+            assert item["positive_prompt"].startswith("elf_mage_v1, ")
+
+
+# ---------------------------------------------------------------------------
+# POST /api/prompts/generate-batch
+# ---------------------------------------------------------------------------
+
+
+class TestGeneratePoseBatch:
+    """Tests for the POST /api/prompts/generate-batch endpoint."""
+
+    @pytest.mark.asyncio
+    async def test_generate_batch_with_custom_poses(self, client: AsyncClient):
+        """Should generate prompts for custom poses × views."""
+        response = await client.post(
+            "/api/prompts/generate-batch",
+            json={
+                "poses": [
+                    {"name": "idle", "pose": "idle stance"},
+                    {"name": "attack", "pose": "attack swing"},
+                ],
+                "views": ["front", "side"],
+            },
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["batch_id"].startswith("batch_")
+        # 2 poses × 2 views = 4 items
+        assert len(data["items"]) == 4
+        names = [item["name"] for item in data["items"]]
+        assert "idle_front" in names
+        assert "idle_side" in names
+        assert "attack_front" in names
+        assert "attack_side" in names
+
+    @pytest.mark.asyncio
+    async def test_generate_batch_with_batch_id(self, client: AsyncClient):
+        """Should use a predefined pose batch template."""
+        response = await client.post(
+            "/api/prompts/generate-batch",
+            json={"batch_id": "basic_4dir_idle"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["items"]) == 4  # basic_4dir_idle has 4 poses (each with embedded view)
+        names = [item["name"] for item in data["items"]]
+        # Batch template poses have embedded views, so names match the pose "name" field
+        assert "idle_front" in names
+        assert "idle_side" in names
+
+    @pytest.mark.asyncio
+    async def test_generate_batch_with_lora_trigger(self, client: AsyncClient):
+        """All prompts should include the LoRA trigger token."""
+        response = await client.post(
+            "/api/prompts/generate-batch",
+            json={
+                "batch_id": "combat_set",
+                "lora_trigger_token": "my_char_v1",
+            },
+        )
+        assert response.status_code == 200
+        data = response.json()
+        for item in data["items"]:
+            assert item["positive_prompt"].startswith("my_char_v1, ")
+
+    @pytest.mark.asyncio
+    async def test_generate_batch_with_character_id(self, client: AsyncClient):
+        """Should use character profile fields and trigger token."""
+        # First create a character
+        char_resp = await client.post(
+            "/api/characters",
+            json={
+                "project_name": "TestProject",
+                "character_name": "TestHero",
+                "species": "elf",
+                "character_class": "mage",
+                "weapon": "staff",
+                "art_style": "pixel art sprite",
+            },
+        )
+        assert char_resp.status_code == 201
+        char_data = char_resp.json()
+        character_id = char_data["character_id"]
+        trigger_token = char_data["trigger_token"]
+
+        # Generate batch using the character
+        response = await client.post(
+            "/api/prompts/generate-batch",
+            json={
+                "character_id": character_id,
+                "batch_id": "basic_4dir_idle",
+            },
+        )
+        assert response.status_code == 200
+        data = response.json()
+        # Should auto-use the character's trigger token
+        for item in data["items"]:
+            assert item["positive_prompt"].startswith(f"{trigger_token}, ")
+
+    @pytest.mark.asyncio
+    async def test_generate_batch_character_not_found(self, client: AsyncClient):
+        """Should return 404 for nonexistent character_id."""
+        response = await client.post(
+            "/api/prompts/generate-batch",
+            json={"character_id": "char_nonexistent"},
+        )
+        assert response.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_generate_batch_invalid_batch_id(self, client: AsyncClient):
+        """Should return 404 for nonexistent batch_id."""
+        response = await client.post(
+            "/api/prompts/generate-batch",
+            json={"batch_id": "nonexistent_batch"},
+        )
+        assert response.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_generate_batch_default_poses_and_views(self, client: AsyncClient):
+        """Should use default poses and views when none specified."""
+        response = await client.post(
+            "/api/prompts/generate-batch",
+            json={},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        # Default: 4 poses × 4 views = 16 items
+        assert len(data["items"]) == 16
+
+    @pytest.mark.asyncio
+    async def test_generate_batch_item_fields(self, client: AsyncClient):
+        """Each item should have all required fields."""
+        response = await client.post(
+            "/api/prompts/generate-batch",
+            json={
+                "poses": [{"name": "idle", "pose": "idle stance"}],
+                "views": ["front"],
+            },
+        )
+        assert response.status_code == 200
+        data = response.json()
+        item = data["items"][0]
+        assert "name" in item
+        assert "pose" in item
+        assert "view" in item
+        assert "positive_prompt" in item
+        assert "negative_prompt" in item
+        assert "attributes" in item
+
+    @pytest.mark.asyncio
+    async def test_generate_batch_with_custom_attributes(self, client: AsyncClient):
+        """Should use provided attributes instead of deriving from profile."""
+        response = await client.post(
+            "/api/prompts/generate-batch",
+            json={
+                "poses": [{"name": "idle", "pose": "idle stance"}],
+                "views": ["front"],
+                "attributes": {"classes": "warrior", "species": "human"},
+            },
+        )
+        assert response.status_code == 200
+        data = response.json()
+        for item in data["items"]:
+            assert item["attributes"].get("classes") == "warrior"
+
+    @pytest.mark.asyncio
+    async def test_generate_batch_with_template_id(self, client: AsyncClient):
+        """Should use the specified prompt template."""
+        response = await client.post(
+            "/api/prompts/generate-batch",
+            json={
+                "poses": [{"name": "idle", "pose": "idle stance"}],
+                "views": ["front"],
+                "template_id": "pixel_art_sprite",
+            },
+        )
+        assert response.status_code == 200
+        data = response.json()
+        for item in data["items"]:
+            assert "pixel art" in item["positive_prompt"]
+
+
+# ---------------------------------------------------------------------------
+# GET /api/pose-batches
+# ---------------------------------------------------------------------------
+
+
+class TestGetPoseBatches:
+    """Tests for the GET /api/pose-batches endpoint."""
+
+    @pytest.mark.asyncio
+    async def test_get_pose_batches(self, client: AsyncClient):
+        """Should return all pose batch templates."""
+        response = await client.get("/api/pose-batches")
+        assert response.status_code == 200
+        data = response.json()
+        assert "batches" in data
+        assert len(data["batches"]) > 0
+
+    @pytest.mark.asyncio
+    async def test_pose_batch_structure(self, client: AsyncClient):
+        """Each batch should have required fields."""
+        response = await client.get("/api/pose-batches")
+        data = response.json()
+        for batch in data["batches"]:
+            assert "id" in batch
+            assert "label" in batch
+            assert "poses" in batch
+            for pose in batch["poses"]:
+                assert "name" in pose
+                assert "pose" in pose
+                assert "view" in pose
+
+    @pytest.mark.asyncio
+    async def test_known_batch_ids(self, client: AsyncClient):
+        """Should contain expected batch IDs."""
+        response = await client.get("/api/pose-batches")
+        data = response.json()
+        batch_ids = [b["id"] for b in data["batches"]]
+        assert "basic_4dir_idle" in batch_ids
+        assert "combat_set" in batch_ids
+        assert "side_scroller_basic" in batch_ids

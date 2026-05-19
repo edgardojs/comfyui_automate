@@ -47,6 +47,16 @@ async def create_preset(
     session: AsyncSession = Depends(get_session),
 ) -> Preset:
     """Create and persist a new preset."""
+    # Check for duplicate name
+    existing = await session.execute(
+        select(PresetRow).where(PresetRow.name == body.name)
+    )
+    if existing.scalar_one_or_none() is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"A preset with the name '{body.name}' already exists.",
+        )
+
     preset = Preset(
         name=body.name,
         attributes=body.attributes,

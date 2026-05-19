@@ -185,8 +185,20 @@ async def prepare_dataset(
     img_dir.mkdir(parents=True, exist_ok=True)
 
     # Copy images and write caption files
+    references_root = get_references_dir(char_row.project_name, char_row.character_name)
     for ref in accepted_refs:
         src_path = Path(ref.file_path)
+
+        # Validate that the source path is within the references directory
+        # to prevent path traversal attacks
+        try:
+            src_path.resolve().relative_to(references_root.resolve())
+        except ValueError:
+            logger.warning(
+                "Reference image path outside references dir, skipping: %s", src_path
+            )
+            continue
+
         if not src_path.exists():
             logger.warning("Reference image not found: %s", src_path)
             continue
@@ -282,23 +294,38 @@ def generate_training_command(
     # Merge default args from backend config
     default_args = backend.get("default_args", {})
     if config.custom_args:
+        # Sanitize custom_args keys: allow only alphanumeric, hyphens, underscores
+        import re
+        _safe_key_pattern = re.compile(r"^[a-zA-Z0-9_-]+$")
+        for key, value in config.custom_args.items():
+            if not _safe_key_pattern.match(key):
+                raise ValueError(
+                    f"custom_args key '{key}' contains invalid characters. "
+                    "Only alphanumeric characters, hyphens, and underscores are allowed."
+                )
+            if not isinstance(value, (str, int, float, bool)):
+                raise ValueError(
+                    f"custom_args['{key}'] has unsupported type {type(value).__name__}. "
+                    "Only str, int, float, and bool values are allowed."
+                )
         default_args = {**default_args, **config.custom_args}
 
-    # Add custom args as CLI flags
-    extra_flags = ""
+    # Add custom args as CLI flags — build argument list directly
+    # to avoid shell injection via string concatenation
+    extra_args: list[str] = []
     for key, value in default_args.items():
         if isinstance(value, bool):
             if value:
-                extra_flags += f" --{key}"
+                extra_args.append(f"--{key}")
         else:
-            extra_flags += f" --{key}={value}"
+            extra_args.append(f"--{key}={value}")
 
-    command_str = template.format(**format_vars) + extra_flags
+    # Format the command template with config values
+    command_str = template.format(**format_vars)
 
-    # Split command string into list of arguments
-    # Using shlex-like splitting for proper argument handling
+    # Split the base command string into list of arguments
     import shlex
-    return shlex.split(command_str)
+    return shlex.split(command_str) + extra_args
 
 
 # ---------------------------------------------------------------------------
@@ -365,9 +392,15 @@ async def start_training(
         _active_processes[job_id] = process
         logger.info("Training process started for job %s (PID: %d)", job_id, process.pid)
 
+        # Close the file descriptor in the parent process — the child
+        # has inherited it, so our handle is no longer needed.  Failing
+        # to close leaks a file descriptor per training job.
+        log_file.close()
+
     except Exception:
         # Clean up log file handle on failure
-        log_file.close()
+        if not log_file.closed:
+            log_file.close()
         _active_processes.pop(job_id, None)
         _active_log_files.pop(job_id, None)
         raise
@@ -400,7 +433,9 @@ async def wait_for_training(job_id: str, session: AsyncSession) -> None:
     finally:
         # Clean up process tracking
         _active_processes.pop(job_id, None)
-        log_path = _active_log_files.pop(job_id, None)
+        # Keep log path in _active_log_files so read_training_log() can
+        # still access logs for completed jobs
+        log_path = _active_log_files.get(job_id)
 
         # Close log file if it's still open
         # (The subprocess inherited the file descriptor, so we can close our handle)
@@ -519,7 +554,7 @@ async def cancel_training(job_id: str) -> bool:
         pass
     finally:
         _active_processes.pop(job_id, None)
-        _active_log_files.pop(job_id, None)
+        # Keep log path so read_training_log() can still access logs for cancelled jobs
 
     return True
 
@@ -547,7 +582,12 @@ def read_training_log(job_id: str, tail: int = 100) -> str | None:
         return None
 
     try:
-        lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
-        return "\n".join(lines[-tail:])
+        # Use collections.deque for memory-efficient tail reading
+        # instead of loading the entire file into memory
+        from collections import deque
+        with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+            tail_lines = deque(f, maxlen=tail)
+        # Strip trailing newlines from each line (like splitlines() does)
+        return "\n".join(line.rstrip("\n").rstrip("\r") for line in tail_lines)
     except Exception:
         return None

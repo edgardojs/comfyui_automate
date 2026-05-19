@@ -102,11 +102,13 @@ function CaptionEditor({ characterId, showToast }) {
         prev.map(ref => ref.image_id === editingImageId ? { ...ref, caption: updated.caption } : ref)
       )
       showToast('Caption updated')
+      // Only clear edit mode on success
+      setEditingImageId(null)
+      setEditCaption('')
     } catch (err) {
       showToast(`❌ ${err.message}`)
+      // Keep editing active on failure so the user can retry
     }
-    setEditingImageId(null)
-    setEditCaption('')
   }, [characterId, editingImageId, editCaption, showToast])
 
   const handleCancelEdit = useCallback(() => {
@@ -257,7 +259,10 @@ function CaptionEditor({ characterId, showToast }) {
                       </div>
                     ) : (
                       <div
+                        role="button"
+                        tabIndex={0}
                         onClick={() => handleStartEdit(ref)}
+                        onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleStartEdit(ref) } }}
                         className="cursor-pointer group"
                       >
                         {hasCaption ? (

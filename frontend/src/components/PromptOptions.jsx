@@ -125,9 +125,12 @@ function PromptOptions({
             disabled={loading}
             className="w-full rounded-md border border-gray-700 bg-gray-800 px-3 py-1.5 text-sm text-gray-200 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:opacity-50"
           >
-            {templates.map(t => (
-              <option key={t.id} value={t.id}>{t.label}</option>
-            ))}
+            {templates.length > 0
+              ? templates.map(t => (
+                  <option key={t.id} value={t.id}>{t.label}</option>
+                ))
+              : <option value="">No templates loaded</option>
+            }}
           </select>
         </div>
 
@@ -142,9 +145,12 @@ function PromptOptions({
             disabled={loading}
             className="w-full rounded-md border border-gray-700 bg-gray-800 px-3 py-1.5 text-sm text-gray-200 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:opacity-50"
           >
-            {profiles.map(p => (
-              <option key={p.id} value={p.id}>{p.label}</option>
-            ))}
+            {profiles.length > 0
+              ? profiles.map(p => (
+                  <option key={p.id} value={p.id}>{p.label}</option>
+                ))
+              : <option value="">No profiles loaded</option>
+            }}
           </select>
         </div>
       </div>

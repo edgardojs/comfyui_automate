@@ -200,8 +200,12 @@ function CharactersPage({ showToast }) {
             {chars.map(char => (
               <div
                 key={char.character_id}
+                role="button"
+                tabIndex={0}
+                aria-label={`View ${char.character_name}`}
                 className="bg-gray-800 border border-gray-700 rounded-lg p-4 hover:border-gray-600 transition-colors cursor-pointer"
                 onClick={() => setShowDetailId(char.character_id)}
+                onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setShowDetailId(char.character_id) } }}
               >
                 <div className="flex items-start justify-between">
                   <div>
@@ -430,7 +434,7 @@ function CharactersPage({ showToast }) {
 
       {/* ===== Detail View ===== */}
       {selectedCharacter && !showEditDialog && (
-        <div className="fixed inset-0 z-40 bg-black/60 flex items-center justify-center p-4" onClick={() => setShowDetailId(null)}>
+        <div className="fixed inset-0 z-40 bg-black/60 flex items-center justify-center p-4" onClick={() => setShowDetailId(null)} onKeyDown={e => { if (e.key === 'Escape') setShowDetailId(null) }}>
           <div className="bg-gray-900 border border-gray-700 rounded-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto p-6" onClick={e => e.stopPropagation()}>
             <div className="flex items-start justify-between mb-4">
               <div>

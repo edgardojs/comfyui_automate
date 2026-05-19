@@ -134,26 +134,27 @@ async def toggle_favorite(
     generation_id: str,
     session: AsyncSession = Depends(get_session),
 ) -> FavoriteResponse:
-    """Toggle the is_favorite flag on a history entry."""
+    """Toggle the is_favorite flag on all history entries for a generation batch."""
     result = await session.execute(
         select(PromptHistoryRow).where(
             PromptHistoryRow.generation_id == generation_id
         )
     )
-    row = result.scalar_one_or_none()
+    rows = result.scalars().all()
 
-    if row is None:
+    if not rows:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"History entry '{generation_id}' not found",
         )
 
-    # Toggle the favorite flag (Boolean on PostgreSQL, Integer on SQLite)
-    row.is_favorite = not row.is_favorite  # type: ignore[assignment]
+    # Toggle the favorite flag on all entries in the batch
+    new_favorite = not rows[0].is_favorite
+    for row in rows:
+        row.is_favorite = new_favorite  # type: ignore[assignment]
     await session.commit()
-    await session.refresh(row)
 
     return FavoriteResponse(
-        generation_id=row.generation_id,  # type: ignore[arg-type]
-        is_favorite=bool(row.is_favorite),  # type: ignore[arg-type]
+        generation_id=generation_id,
+        is_favorite=bool(new_favorite),
     )

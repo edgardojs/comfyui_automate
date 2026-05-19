@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime
 from enum import Enum
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 # ---------------------------------------------------------------------------
@@ -138,6 +138,15 @@ class CharacterProfile(BaseModel):
             raise ValueError("Field must not contain HTML tags")
         return v.strip()
 
+    @model_validator(mode="after")
+    def auto_generate_trigger_token(self) -> "CharacterProfile":
+        """Auto-generate trigger_token if left empty."""
+        if not self.trigger_token:
+            self.trigger_token = _generate_trigger_token(
+                self.project_name, self.character_name, self.art_style or ""
+            )
+        return self
+
 
 class CharacterProfileCreate(BaseModel):
     """Request body for creating a new character profile."""
@@ -236,6 +245,8 @@ class ReferenceImage(BaseModel):
     metadata such as viewing angle and caption.
     """
 
+    model_config = {"extra": "forbid"}
+
     image_id: str = Field(
         default_factory=_generate_image_id,
         description="Auto-generated unique ID for the reference image",
@@ -249,6 +260,22 @@ class ReferenceImage(BaseModel):
     original_filename: str = Field(
         ..., description="Original filename as uploaded by the user",
     )
+
+    @field_validator("file_path")
+    @classmethod
+    def validate_file_path(cls, v: str) -> str:
+        """Reject paths with directory traversal components."""
+        if ".." in v:
+            raise ValueError("file_path must not contain '..' directory traversal")
+        return v
+
+    @field_validator("original_filename")
+    @classmethod
+    def validate_original_filename(cls, v: str) -> str:
+        """Reject filenames with directory traversal components."""
+        if ".." in v or "/" in v or "\\" in v:
+            raise ValueError("original_filename must not contain '..', '/', or '\\\\'")
+        return v
     status: ReferenceStatus = Field(
         default=ReferenceStatus.PENDING,
         description="Curation status: pending, accepted, rejected, or maybe",
@@ -263,8 +290,9 @@ class ReferenceImage(BaseModel):
     rejection_reason: str | None = Field(
         default=None, description="Reason for rejection, if status is 'rejected'",
     )
-    created_at: datetime | None = Field(
-        default=None, description="Timestamp when the image was uploaded",
+    created_at: datetime = Field(
+        default_factory=datetime.now,
+        description="Timestamp when the image was uploaded",
     )
 
 

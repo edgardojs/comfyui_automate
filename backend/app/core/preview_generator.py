@@ -16,10 +16,9 @@ from __future__ import annotations
 
 import json
 import logging
+import random
 from pathlib import Path
 from typing import Any
-
-from app.core.storage import get_previews_dir, get_lora_dir
 
 logger = logging.getLogger(__name__)
 
@@ -239,8 +238,6 @@ def generate_preview_workflow(
         A ComfyUI API-format workflow dict that can be submitted via
         ``POST /prompt``.
     """
-    import random
-
     if seed is None:
         seed = random.randint(0, 2**32 - 1)
 
@@ -384,7 +381,6 @@ def generate_all_preview_workflows(
 
     workflows = []
     for i, prompt_info in enumerate(prompts):
-        import random
         workflow_seed = seed if seed is not None else random.randint(0, 2**32 - 1)
 
         workflow = generate_preview_workflow(

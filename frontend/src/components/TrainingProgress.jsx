@@ -47,6 +47,8 @@ function TrainingProgress({ jobId, showToast, onJobComplete }) {
   // Auto-refresh
   const [autoRefresh, setAutoRefresh] = useState(true)
   const refreshIntervalRef = useRef(null)
+  // Track current job status via ref so the interval callback isn't stale
+  const jobStatusRef = useRef(job?.status)
 
   // Log container ref for auto-scroll
   const logContainerRef = useRef(null)
@@ -96,12 +98,16 @@ function TrainingProgress({ jobId, showToast, onJobComplete }) {
       try {
         const data = await fetchTrainingBackends()
         setBackends(data || [])
+        // Set selectedBackend to first available backend if current default isn't in the list
+        if (data?.length && !data.some(b => b.id === selectedBackend)) {
+          setSelectedBackend(data[0].id)
+        }
       } catch {
         // Backends may not be available
       }
     }
     loadBackends()
-  }, [])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Initial load
   useEffect(() => {
@@ -110,6 +116,9 @@ function TrainingProgress({ jobId, showToast, onJobComplete }) {
 
   // Auto-refresh for running jobs
   useEffect(() => {
+    // Keep the ref in sync with the current job status
+    jobStatusRef.current = job?.status
+
     if (!autoRefresh || !job) return
 
     // Clear existing interval
@@ -121,7 +130,8 @@ function TrainingProgress({ jobId, showToast, onJobComplete }) {
     if (job.status === 'running' || job.status === 'pending') {
       refreshIntervalRef.current = setInterval(() => {
         loadJob()
-        if (job.status === 'running') {
+        // Use ref to check current status instead of stale closure value
+        if (jobStatusRef.current === 'running') {
           loadStatus()
           loadLogs()
         }

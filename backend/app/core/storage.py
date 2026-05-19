@@ -187,6 +187,13 @@ def save_reference_image(
             f"Allowed: {', '.join(sorted(ALLOWED_IMAGE_EXTENSIONS))}"
         )
 
+    # Validate file content matches the claimed extension (defense-in-depth)
+    if not validate_image_content(file_content, ext):
+        raise ValueError(
+            f"File content does not match the claimed extension '{ext}'. "
+            "The file may be corrupted or disguised."
+        )
+
     # Sanitize the filename to prevent path traversal attacks:
     # 1. Replace backslashes with forward slashes (handles Windows-style paths)
     # 2. Extract only the basename (strips any directory components like ../)

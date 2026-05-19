@@ -4,8 +4,10 @@
  * Shows each variation as a card with positive/negative prompts,
  * copy buttons, and the resolved attributes used. Optionally includes
  * a "Send to ComfyUI" button when ComfyUI settings are configured.
+ * When a LoRA trigger token is active, it is visually highlighted in
+ * the positive prompt display.
  */
-function PromptResults({ results, error, isGenerating, onCopy, onSendToComfyUI, comfyUISubmitting, comfyUIResult }) {
+function PromptResults({ results, error, isGenerating, onCopy, onSendToComfyUI, comfyUISubmitting, comfyUIResult, loraTriggerToken }) {
   // Loading state
   if (isGenerating && !results) {
     return (
@@ -48,7 +50,8 @@ function PromptResults({ results, error, isGenerating, onCopy, onSendToComfyUI, 
     )
   }
 
-  const { items, generation_id } = results
+  const items = results?.items ?? []
+  const generationId = results?.generation_id ?? ''
 
   return (
     <div className="space-y-4">
@@ -59,7 +62,7 @@ function PromptResults({ results, error, isGenerating, onCopy, onSendToComfyUI, 
             ({items.length} {items.length === 1 ? 'variation' : 'variations'})
           </span>
         </h2>
-        <span className="text-xs text-gray-600 font-mono">{generation_id}</span>
+        <span className="text-xs text-gray-600 font-mono">{generationId}</span>
       </div>
 
       {items.map((item, index) => (
@@ -111,9 +114,21 @@ function PromptResults({ results, error, isGenerating, onCopy, onSendToComfyUI, 
           <div className="mb-3">
             <label className="mb-1 block text-xs font-medium text-emerald-400 uppercase tracking-wider">
               Positive Prompt
+              {loraTriggerToken && (
+                <span className="ml-2 inline-flex items-center rounded bg-indigo-600/20 px-1.5 py-0.5 text-[10px] font-medium text-indigo-300 border border-indigo-600/30">
+                  LoRA: <code className="ml-1 font-mono">{loraTriggerToken}</code>
+                </span>
+              )}
             </label>
             <div className="rounded-md bg-gray-800/50 border border-gray-700 p-3 text-sm text-gray-200 leading-relaxed select-all">
-              {item.positive_prompt}
+              {loraTriggerToken && item.positive_prompt.startsWith(loraTriggerToken + ',') ? (
+                <>
+                  <span className="rounded bg-indigo-600/25 px-1 py-0.5 text-indigo-300 font-medium font-mono">{loraTriggerToken}</span>
+                  <span>{item.positive_prompt.slice(loraTriggerToken.length)}</span>
+                </>
+              ) : (
+                item.positive_prompt
+              )}
             </div>
           </div>
 

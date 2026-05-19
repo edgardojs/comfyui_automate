@@ -1,0 +1,91 @@
+{
+  "batches": [
+    {
+      "id": "basic_4dir_idle",
+      "label": "Basic 4-Direction Idle",
+      "description": "Idle stance from four directions — suitable for character select screens and basic NPC sprites.",
+      "poses": [
+        {"name": "idle_front", "pose": "idle stance", "view": "front view"},
+        {"name": "idle_side", "pose": "idle stance", "view": "side view"},
+        {"name": "idle_back", "pose": "idle stance", "view": "back view"},
+        {"name": "idle_three_quarter", "pose": "idle stance", "view": "three-quarter view"}
+      ]
+    },
+    {
+      "id": "walk_cycle_front",
+      "label": "Walk Cycle (Front)",
+      "description": "Four-frame walk cycle from the front view — covers the main stride phases.",
+      "poses": [
+        {"name": "walk_front_01", "pose": "walking mid-stride left foot forward", "view": "front view"},
+        {"name": "walk_front_02", "pose": "walking mid-stride right foot forward", "view": "front view"},
+        {"name": "walk_front_03", "pose": "walking contact pose", "view": "front view"},
+        {"name": "walk_front_04", "pose": "walking passing pose", "view": "front view"}
+      ]
+    },
+    {
+      "id": "walk_cycle_side",
+      "label": "Walk Cycle (Side)",
+      "description": "Four-frame walk cycle from the side view — classic platformer walk animation.",
+      "poses": [
+        {"name": "walk_side_01", "pose": "walking mid-stride left foot forward", "view": "side view"},
+        {"name": "walk_side_02", "pose": "walking mid-stride right foot forward", "view": "side view"},
+        {"name": "walk_side_03", "pose": "walking contact pose", "view": "side view"},
+        {"name": "walk_side_04", "pose": "walking passing pose", "view": "side view"}
+      ]
+    },
+    {
+      "id": "combat_set",
+      "label": "Combat Animation Set",
+      "description": "Core combat animation set — idle, attack, hurt, and death from the front view.",
+      "poses": [
+        {"name": "idle_front", "pose": "idle stance", "view": "front view"},
+        {"name": "attack_front", "pose": "attack swing", "view": "front view"},
+        {"name": "hurt_front", "pose": "hurt recoil", "view": "front view"},
+        {"name": "death_front", "pose": "falling defeated", "view": "front view"}
+      ]
+    },
+    {
+      "id": "full_4dir_combat",
+      "label": "Full 4-Direction Combat",
+      "description": "Complete combat set from four directions — idle, attack, and hurt for each view angle.",
+      "poses": [
+        {"name": "idle_front", "pose": "idle stance", "view": "front view"},
+        {"name": "idle_side", "pose": "idle stance", "view": "side view"},
+        {"name": "idle_back", "pose": "idle stance", "view": "back view"},
+        {"name": "idle_three_quarter", "pose": "idle stance", "view": "three-quarter view"},
+        {"name": "attack_front", "pose": "attack swing", "view": "front view"},
+        {"name": "attack_side", "pose": "attack swing", "view": "side view"},
+        {"name": "attack_back", "pose": "attack swing", "view": "back view"},
+        {"name": "attack_three_quarter", "pose": "attack swing", "view": "three-quarter view"},
+        {"name": "hurt_front", "pose": "hurt recoil", "view": "front view"},
+        {"name": "hurt_side", "pose": "hurt recoil", "view": "side view"},
+        {"name": "hurt_back", "pose": "hurt recoil", "view": "back view"},
+        {"name": "hurt_three_quarter", "pose": "hurt recoil", "view": "three-quarter view"}
+      ]
+    },
+    {
+      "id": "top_down_idle",
+      "label": "Top-Down Idle (4 Directions)",
+      "description": "Idle stance from four directions for top-down RPG sprites.",
+      "poses": [
+        {"name": "idle_north", "pose": "idle stance", "view": "back view"},
+        {"name": "idle_south", "pose": "idle stance", "view": "front view"},
+        {"name": "idle_east", "pose": "idle stance", "view": "side view"},
+        {"name": "idle_west", "pose": "idle stance", "view": "side view"}
+      ]
+    },
+    {
+      "id": "side_scroller_basic",
+      "label": "Side-Scroller Basic Set",
+      "description": "Essential side-view animation set for platformer characters — idle, run, jump, attack.",
+      "poses": [
+        {"name": "idle_side", "pose": "idle stance", "view": "side view"},
+        {"name": "run_side_01", "pose": "running mid-stride left", "view": "side view"},
+        {"name": "run_side_02", "pose": "running mid-stride right", "view": "side view"},
+        {"name": "jump_side", "pose": "jumping mid-air", "view": "side view"},
+        {"name": "attack_side", "pose": "attack swing", "view": "side view"},
+        {"name": "hurt_side", "pose": "hurt recoil", "view": "side view"}
+      ]
+    }
+  ]
+}

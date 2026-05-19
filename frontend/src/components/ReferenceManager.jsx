@@ -25,6 +25,9 @@ const STATUS_CONFIG = {
 
 const ANGLE_OPTIONS = ['front', 'side', 'back', 'three-quarter']
 
+const ALLOWED_FILE_TYPES = ['image/png', 'image/jpeg', 'image/webp']
+const MAX_UPLOAD_FILES = 20
+
 function ReferenceManager({ characterId, showToast }) {
   const [references, setReferences] = useState([])
   const [loading, setLoading] = useState(true)
@@ -56,10 +59,27 @@ function ReferenceManager({ characterId, showToast }) {
   // --- Upload ---
   const handleFiles = useCallback(async (files) => {
     if (!files || files.length === 0) return
+
+    const fileArray = Array.from(files)
+
+    // Client-side file count limit
+    if (fileArray.length > MAX_UPLOAD_FILES) {
+      showToast(`❌ Maximum ${MAX_UPLOAD_FILES} files at a time. You selected ${fileArray.length}.`)
+      return
+    }
+
+    // Client-side file type validation (also enforced server-side)
+    const invalidFiles = fileArray.filter(f => !ALLOWED_FILE_TYPES.includes(f.type))
+    if (invalidFiles.length > 0) {
+      const names = invalidFiles.map(f => f.name).join(', ')
+      showToast(`❌ Unsupported file type(s): ${names}. Only PNG, JPG, and WEBP are allowed.`)
+      return
+    }
+
     setUploading(true)
     try {
-      await uploadReferences(characterId, Array.from(files))
-      showToast(`📸 Uploaded ${files.length} image(s)`)
+      await uploadReferences(characterId, fileArray)
+      showToast(`📸 Uploaded ${fileArray.length} image(s)`)
       await loadReferences()
     } catch (err) {
       showToast(`❌ Upload failed: ${err.message}`)
@@ -174,7 +194,7 @@ function ReferenceManager({ characterId, showToast }) {
           <p className="text-xs text-gray-400">
             {validation.accepted_count} accepted / {validation.total_images} total images
           </p>
-          {validation.warnings.length > 0 && (
+          {validation?.warnings?.length > 0 && (
             <ul className="mt-2 space-y-1">
               {validation.warnings.map((w, i) => (
                 <li key={i} className="text-xs text-yellow-300">
@@ -253,9 +273,13 @@ function ReferenceManager({ characterId, showToast }) {
             return (
               <div
                 key={ref.image_id}
+                role="button"
+                tabIndex={0}
+                aria-label={`Select ${ref.original_filename}`}
                 className={`relative bg-gray-800 border rounded-lg overflow-hidden cursor-pointer transition-colors
                   ${selectedImage === ref.image_id ? 'border-emerald-500 ring-1 ring-emerald-500' : 'border-gray-700 hover:border-gray-500'}`}
                 onClick={() => setSelectedImage(selectedImage === ref.image_id ? null : ref.image_id)}
+                onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelectedImage(selectedImage === ref.image_id ? null : ref.image_id) } }}
               >
                 {/* Thumbnail */}
                 <div className="aspect-square bg-gray-900 flex items-center justify-center overflow-hidden">

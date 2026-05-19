@@ -96,6 +96,29 @@ class LoRATrainingConfig(BaseModel):
         description="Additional custom training arguments for advanced users",
     )
 
+    @field_validator("custom_args")
+    @classmethod
+    def validate_custom_args(cls, v: dict[str, Any] | None) -> dict[str, Any] | None:
+        """Validate custom_args size and value types."""
+        if v is None:
+            return v
+        if len(v) > 50:
+            raise ValueError("custom_args must have at most 50 keys")
+        import re
+        _safe_key_pattern = re.compile(r"^[a-zA-Z0-9_-]+$")
+        for key, value in v.items():
+            if not _safe_key_pattern.match(key):
+                raise ValueError(
+                    f"custom_args key '{key}' contains invalid characters. "
+                    "Only alphanumeric characters, hyphens, and underscores are allowed."
+                )
+            if not isinstance(value, (str, int, float, bool)):
+                raise ValueError(
+                    f"custom_args['{key}'] has unsupported type {type(value).__name__}. "
+                    "Only str, int, float, and bool values are allowed."
+                )
+        return v
+
     @field_validator("character_id")
     @classmethod
     def reject_whitespace_only(cls, v: str) -> str:
@@ -169,6 +192,47 @@ class LoRATrainingConfigCreate(BaseModel):
         description="Additional custom training arguments",
     )
 
+    @field_validator("character_id")
+    @classmethod
+    def reject_whitespace_only(cls, v: str) -> str:
+        """Reject strings that are empty or whitespace-only."""
+        if not v.strip():
+            raise ValueError("character_id must not be empty")
+        return v.strip()
+
+    @field_validator("output_format")
+    @classmethod
+    def validate_output_format(cls, v: str | None) -> str | None:
+        """Only allow known output formats."""
+        if v is None:
+            return v
+        allowed = {"safetensors", "pt", "ckpt"}
+        if v.lower() not in allowed:
+            raise ValueError(f"output_format must be one of: {', '.join(sorted(allowed))}")
+        return v.lower()
+
+    @field_validator("custom_args")
+    @classmethod
+    def validate_custom_args(cls, v: dict[str, Any] | None) -> dict[str, Any] | None:
+        """Validate custom_args size and value types."""
+        if v is None:
+            return v
+        if len(v) > 50:
+            raise ValueError("custom_args must have at most 50 keys")
+        import re
+        for key, value in v.items():
+            if not re.match(r"^[a-zA-Z0-9_-]+$", key):
+                raise ValueError(
+                    f"custom_args key '{key}' contains invalid characters. "
+                    "Only alphanumeric, hyphens, and underscores are allowed."
+                )
+            if not isinstance(value, (str, int, float, bool)):
+                raise ValueError(
+                    f"custom_args['{key}'] has unsupported type {type(value).__name__}. "
+                    "Only str, int, float, and bool are allowed."
+                )
+        return v
+
 
 # ---------------------------------------------------------------------------
 # LoRA Job
@@ -218,14 +282,87 @@ class LoRAJobSummary(BaseModel):
     """Summary view of a LoRA training job (without full config details).
 
     Used for list endpoints where the full config is not needed.
+    Includes character name and trigger token for display in the UI.
     """
 
     job_id: str
     character_id: str
+    character_name: str | None = None
+    trigger_token: str | None = None
     preset_id: str | None
     learning_rate: float
     epochs: int
+    lora_strength: float = 1.0
     status: LoRAJobStatus
     output_lora_path: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+
+
+# ---------------------------------------------------------------------------
+# Response models for dict-returning endpoints
+# ---------------------------------------------------------------------------
+
+
+class TrainingJobStatusResponse(BaseModel):
+    """Response model for GET /api/lora/jobs/{job_id}/status."""
+
+    job_id: str
+    status: str
+    is_running: bool
+    pid: int | None = None
+    log_path: str | None = None
+
+
+class TrainingJobLogsResponse(BaseModel):
+    """Response model for GET /api/lora/jobs/{job_id}/logs."""
+
+    job_id: str
+    logs: str
+    tail: int
+
+
+class PreviewSubmission(BaseModel):
+    """A single preview workflow submission result."""
+
+    preview_name: str
+    prompt: str
+    view: str
+    pose: str
+    prompt_id: str | None = None
+    number: int | None = None
+
+
+class PreviewError(BaseModel):
+    """A single preview workflow error."""
+
+    preview_name: str
+    error: str
+
+
+class GeneratePreviewsResponse(BaseModel):
+    """Response model for POST /api/lora/jobs/{job_id}/generate-previews."""
+
+    job_id: str
+    lora_path: str
+    submitted: list[PreviewSubmission]
+    errors: list[PreviewError]
+    total: int
+    successful: int
+    failed: int
+
+
+class PreviewFile(BaseModel):
+    """A single preview image file."""
+
+    filename: str
+    size: int
+
+
+class ListPreviewsResponse(BaseModel):
+    """Response model for GET /api/lora/jobs/{job_id}/previews."""
+
+    job_id: str
+    character_id: str
+    previews: list[PreviewFile]
+    total: int

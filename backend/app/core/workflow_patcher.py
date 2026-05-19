@@ -91,6 +91,10 @@ def ui_to_api_workflow(ui_workflow: dict[str, Any]) -> dict[str, Any]:
     # Build link lookup: link_id -> link tuple
     links_by_id: dict[int, list] = {}
     for link in ui_workflow.get("links", []):
+        # Validate link tuple has at least 5 elements:
+        # [link_id, source_node_id, source_output_idx, target_node_id, target_input_idx]
+        if not isinstance(link, (list, tuple)) or len(link) < 5:
+            continue
         link_id = link[0]
         links_by_id[link_id] = link
 

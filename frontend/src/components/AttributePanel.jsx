@@ -1,11 +1,13 @@
 import { useState, useEffect, useCallback } from 'react'
-import { fetchAttributes } from '../api/client'
+import { fetchAttributes, fetchLoRAJobs } from '../api/client'
 
 /**
  * AttributePanel — Character attribute selection UI.
  *
  * Renders a dropdown + lock toggle for each attribute category.
  * Fetches the attribute library from the API on mount.
+ * Includes a LoRA selector dropdown that fetches completed LoRA jobs
+ * and auto-fills the trigger token when one is selected.
  */
 function AttributePanel({
   attributes,
@@ -14,11 +16,18 @@ function AttributePanel({
   onLockToggle,
   onRandomizeAll,
   onClearAll,
+  loraSelection,
+  onLoRAChange,
 }) {
   const [categories, setCategories] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [retryKey, setRetryKey] = useState(0)
+
+  // LoRA dropdown state
+  const [completedLoras, setCompletedLoras] = useState([])
+  const [loraLoading, setLoraLoading] = useState(true)
+  const [loraError, setLoraError] = useState(null)
 
   const handleRetry = useCallback(() => {
     setLoading(true)
@@ -42,6 +51,42 @@ function AttributePanel({
     load()
     return () => { cancelled = true }
   }, [retryKey])
+
+  // Fetch completed LoRA jobs
+  useEffect(() => {
+    let cancelled = false
+    async function loadLoras() {
+      try {
+        setLoraError(null)
+        const jobs = await fetchLoRAJobs({ status_filter: 'completed' })
+        if (!cancelled) setCompletedLoras(jobs || [])
+      } catch (err) {
+        if (!cancelled) setLoraError(err.message)
+      } finally {
+        if (!cancelled) setLoraLoading(false)
+      }
+    }
+    loadLoras()
+    return () => { cancelled = true }
+  }, [])
+
+  const handleLoRASelect = useCallback((e) => {
+    const jobId = e.target.value
+    if (!jobId) {
+      onLoRAChange?.(null)
+      return
+    }
+    const job = completedLoras.find(j => j.job_id === jobId)
+    if (job) {
+      onLoRAChange?.({
+        jobId: job.job_id,
+        characterId: job.character_id,
+        characterName: job.character_name || '',
+        triggerToken: job.trigger_token || '',
+        recommendedStrength: job.lora_strength || 1.0,
+      })
+    }
+  }, [completedLoras, onLoRAChange])
 
   if (loading) {
     return (
@@ -93,6 +138,49 @@ function AttributePanel({
         </div>
       </div>
 
+      {/* LoRA Selector */}
+      <div className="mb-4 pb-4 border-b border-gray-800">
+        <label className="mb-1 block text-xs font-medium text-gray-400 uppercase tracking-wider">
+          LoRA Model
+        </label>
+        {loraLoading ? (
+          <div className="h-9 rounded bg-gray-800 animate-pulse" />
+        ) : loraError ? (
+          <p className="text-xs text-red-400">Failed to load LoRAs: {loraError}</p>
+        ) : completedLoras.length === 0 ? (
+          <p className="text-xs text-gray-500 italic">No trained LoRAs available</p>
+        ) : (
+          <select
+            value={loraSelection?.jobId || ''}
+            onChange={handleLoRASelect}
+            className="w-full rounded-md border border-gray-700 bg-gray-800 px-3 py-1.5 text-sm text-gray-200 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+          >
+            <option value="">— None —</option>
+            {completedLoras.map(job => (
+              <option key={job.job_id} value={job.job_id}>
+                {job.character_name || job.character_id} — {job.trigger_token || job.job_id}
+              </option>
+            ))}
+          </select>
+        )}
+        {loraSelection && (
+          <div className="mt-2 space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-gray-500">Trigger Token:</span>
+              <code className="rounded bg-gray-800 px-1.5 py-0.5 text-xs text-indigo-300 font-mono">
+                {loraSelection.triggerToken}
+              </code>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-gray-500">Recommended Strength:</span>
+              <span className="text-xs text-amber-400 font-medium">
+                {loraSelection.recommendedStrength}
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
+
       <div className="space-y-3">
         {categories.map(category => {
           const isLocked = lockedFields.includes(category.id)
@@ -110,7 +198,7 @@ function AttributePanel({
                   className="flex-1 rounded-md border border-gray-700 bg-gray-800 px-3 py-1.5 text-sm text-gray-200 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                 >
                   <option value="">— Random —</option>
-                  {category.attributes.map(attr => (
+                  {category.attributes?.map(attr => (
                     <option key={attr.id} value={attr.id}>
                       {attr.label}
                     </option>

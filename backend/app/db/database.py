@@ -31,6 +31,7 @@ from sqlalchemy import (
     Column,
     DateTime,
     Enum,
+    Float,
     ForeignKey,
     Integer,
     String,
@@ -195,7 +196,7 @@ class PromptHistoryRow(Base):
     __tablename__ = "prompt_history"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    generation_id = Column(String, unique=True, nullable=False, index=True)
+    generation_id = Column(String, nullable=False, index=True)
     positive_prompt = Column(Text, nullable=False)
     negative_prompt = Column(Text, nullable=False)
     attributes = Column(JSONEncodedDict, nullable=False, default=dict)
@@ -222,10 +223,10 @@ class CharacterProfileRow(Base):
     art_style = Column(String, nullable=True)
     target_sprite_size = Column(String, nullable=True)
     target_perspective = Column(
-        StringArray, nullable=False, default=["front", "side", "back", "three-quarter"]
+        StringArray, nullable=False, default=lambda: ["front", "side", "back", "three-quarter"]
     )
     animations = Column(
-        StringArray, nullable=False, default=["idle", "walk", "attack", "hurt"]
+        StringArray, nullable=False, default=lambda: ["idle", "walk", "attack", "hurt"]
     )
     trigger_token = Column(String, unique=True, nullable=False)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
@@ -271,11 +272,11 @@ class LoraJobRow(Base):
     )
     preset_id = Column(String, nullable=True)
     base_model = Column(String, nullable=False, default="stabilityai/stable-diffusion-xl-base-1.0")
-    learning_rate = Column(String, nullable=False, default="0.0002")
+    learning_rate = Column(Float, nullable=False, default=0.0002)
     epochs = Column(Integer, nullable=False, default=18)
     preview_interval = Column(Integer, nullable=False, default=2)
     output_format = Column(String, nullable=False, default="safetensors")
-    lora_strength = Column(String, nullable=False, default="1.0")
+    lora_strength = Column(Float, nullable=False, default=1.0)
     custom_args = Column(JSONEncodedDict, nullable=True)
     status = Column(
         LoraJobStatusEnum,

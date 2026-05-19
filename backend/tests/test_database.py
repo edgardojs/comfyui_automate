@@ -18,7 +18,7 @@ import json
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import create_engine, inspect, text, TypeDecorator
+from sqlalchemy import create_engine, inspect, select, text, TypeDecorator
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import Session
@@ -700,26 +700,32 @@ class TestPromptHistoryRow:
                 assert fetched.attributes == attrs
 
     @pytest.mark.asyncio
-    async def test_history_row_unique_generation_id(self):
-        """PromptHistoryRow.generation_id should be unique."""
+    async def test_history_row_generation_id_allows_duplicates(self):
+        """PromptHistoryRow.generation_id allows duplicates (batch entries)."""
         async with _test_session_factory() as session:
             row1 = PromptHistoryRow(
-                generation_id="gen_unique_hist",
+                generation_id="gen_batch_hist",
                 positive_prompt="test1",
                 negative_prompt="test1",
                 attributes={},
             )
             row2 = PromptHistoryRow(
-                generation_id="gen_unique_hist",
+                generation_id="gen_batch_hist",
                 positive_prompt="test2",
                 negative_prompt="test2",
                 attributes={},
             )
             session.add(row1)
-            await session.commit()
             session.add(row2)
-            with pytest.raises(Exception):
-                await session.commit()
+            await session.commit()
+            # Both rows should be persisted
+            result = await session.execute(
+                select(PromptHistoryRow).where(
+                    PromptHistoryRow.generation_id == "gen_batch_hist"
+                )
+            )
+            rows = result.scalars().all()
+            assert len(rows) == 2
 
 
 class TestCharacterProfileRow:
@@ -1047,11 +1053,11 @@ class TestLoraJobRow:
                 character_id="char_lora_test",
                 preset_id="pixel_art_character",
                 base_model="stabilityai/stable-diffusion-xl-base-1.0",
-                learning_rate="1e-4",
+                learning_rate=1e-4,
                 epochs=10,
                 preview_interval=2,
                 output_format="safetensors",
-                lora_strength="1.0",
+                lora_strength=1.0,
                 status="pending",
             )
             session.add(row)
@@ -1081,11 +1087,11 @@ class TestLoraJobRow:
                 character_id="char_lora_default",
                 preset_id="pixel_art_character",
                 base_model="stabilityai/stable-diffusion-xl-base-1.0",
-                learning_rate="1e-4",
+                learning_rate=1e-4,
                 epochs=10,
                 preview_interval=2,
                 output_format="safetensors",
-                lora_strength="1.0",
+                lora_strength=1.0,
             )
             session.add(row)
             await session.commit()
@@ -1111,11 +1117,11 @@ class TestLoraJobRow:
                     character_id="char_lora_enum",
                     preset_id="pixel_art_character",
                     base_model="stabilityai/stable-diffusion-xl-base-1.0",
-                    learning_rate="1e-4",
+                    learning_rate=1e-4,
                     epochs=10,
                     preview_interval=2,
                     output_format="safetensors",
-                    lora_strength="1.0",
+                    lora_strength=1.0,
                     status=status_val,
                 )
                 session.add(row)
@@ -1141,11 +1147,11 @@ class TestLoraJobRow:
                 character_id="char_lora_null",
                 preset_id="pixel_art_character",
                 base_model="stabilityai/stable-diffusion-xl-base-1.0",
-                learning_rate="1e-4",
+                learning_rate=1e-4,
                 epochs=10,
                 preview_interval=2,
                 output_format="safetensors",
-                lora_strength="1.0",
+                lora_strength=1.0,
                 status="pending",
                 output_lora_path=None,
                 log_output=None,
@@ -1174,11 +1180,11 @@ class TestLoraJobRow:
                 character_id="char_lora_unique",
                 preset_id="pixel_art_character",
                 base_model="stabilityai/stable-diffusion-xl-base-1.0",
-                learning_rate="1e-4",
+                learning_rate=1e-4,
                 epochs=10,
                 preview_interval=2,
                 output_format="safetensors",
-                lora_strength="1.0",
+                lora_strength=1.0,
                 status="pending",
             )
             row2 = LoraJobRow(
@@ -1186,11 +1192,11 @@ class TestLoraJobRow:
                 character_id="char_lora_unique",
                 preset_id="pixel_art_character",
                 base_model="stabilityai/stable-diffusion-xl-base-1.0",
-                learning_rate="1e-4",
+                learning_rate=1e-4,
                 epochs=20,
                 preview_interval=2,
                 output_format="safetensors",
-                lora_strength="1.0",
+                lora_strength=1.0,
                 status="pending",
             )
             session.add(row1)
@@ -1345,11 +1351,11 @@ class TestTableConstraints:
                 character_id=None,  # type: ignore
                 preset_id="pixel_art_character",
                 base_model="stabilityai/stable-diffusion-xl-base-1.0",
-                learning_rate="1e-4",
+                learning_rate=1e-4,
                 epochs=10,
                 preview_interval=2,
                 output_format="safetensors",
-                lora_strength="1.0",
+                lora_strength=1.0,
                 status="pending",
             )
             session.add(row)
@@ -1403,11 +1409,11 @@ class TestForeignKeyRelationships:
                 character_id="char_lora_fk",
                 preset_id="pixel_art_character",
                 base_model="stabilityai/stable-diffusion-xl-base-1.0",
-                learning_rate="1e-4",
+                learning_rate=1e-4,
                 epochs=10,
                 preview_interval=2,
                 output_format="safetensors",
-                lora_strength="1.0",
+                lora_strength=1.0,
                 status="pending",
             )
             session.add(job)

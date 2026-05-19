@@ -372,10 +372,11 @@ async def test_connection(request: TestConnectionRequest) -> TestConnectionRespo
             system_info=None,
         )
     except Exception as e:
+        logger.error("Unexpected error checking ComfyUI status: %s", e)
         return TestConnectionResponse(
             connected=False,
             server_url=url,
-            message=f"Unexpected error: {str(e)}",
+            message="An unexpected error occurred while checking ComfyUI status.",
             system_info=None,
         )
 

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import {
   fetchLoRAMetadata,
   fetchPreviewImages,
@@ -101,7 +101,7 @@ function LoraDetail({ jobId, characterId, showToast }) {
     }
   }, [characterId, showToast])
 
-  // Copy workflow JSON to clipboard
+  // Copy workflow JSON to clipboard with fallback
   const handleCopyWorkflow = useCallback(() => {
     if (!workflow?.workflow) return
     // Remove internal metadata keys before copying
@@ -110,10 +110,32 @@ function LoraDetail({ jobId, characterId, showToast }) {
     delete cleanWorkflow._preview_prompt
     delete cleanWorkflow._preview_view
     delete cleanWorkflow._preview_pose
-    navigator.clipboard.writeText(JSON.stringify(cleanWorkflow, null, 2))
+    const text = JSON.stringify(cleanWorkflow, null, 2)
+    navigator.clipboard.writeText(text)
       .then(() => showToast('📋 Workflow JSON copied to clipboard'))
-      .catch(() => showToast('❌ Failed to copy to clipboard'))
+      .catch(() => {
+        // Fallback for older browsers or non-HTTPS contexts
+        try {
+          const textarea = document.createElement('textarea')
+          textarea.value = text
+          textarea.style.position = 'fixed'
+          textarea.style.opacity = '0'
+          document.body.appendChild(textarea)
+          textarea.select()
+          document.execCommand('copy')
+          document.body.removeChild(textarea)
+          showToast('📋 Workflow JSON copied to clipboard')
+        } catch {
+          showToast('❌ Failed to copy to clipboard — please copy manually')
+        }
+      })
   }, [workflow, showToast])
+
+  // Memoize the stringified workflow to avoid recomputing on every render
+  const workflowJsonStr = useMemo(() => {
+    if (!workflow?.workflow) return ''
+    return JSON.stringify(workflow.workflow, null, 2)
+  }, [workflow?.workflow])
 
   if (metadataLoading) {
     return (
@@ -237,8 +259,8 @@ function LoraDetail({ jobId, characterId, showToast }) {
         {workflow && (
           <div className="bg-gray-900 rounded p-2 max-h-48 overflow-y-auto">
             <pre className="text-[10px] text-gray-300 font-mono whitespace-pre-wrap break-all">
-              {JSON.stringify(workflow.workflow, null, 2).slice(0, 2000)}
-              {JSON.stringify(workflow.workflow, null, 2).length > 2000 && '\n... (truncated)'}
+              {workflowJsonStr.slice(0, 2000)}
+              {workflowJsonStr.length > 2000 && '\n... (truncated)'}
             </pre>
           </div>
         )}

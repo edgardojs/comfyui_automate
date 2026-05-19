@@ -175,8 +175,12 @@ def load_training_presets() -> list[dict[str, Any]]:
         return _presets_cache[0]
 
     # File changed or first load — read from disk
-    with open(presets_path) as f:
-        data = json.load(f)
+    try:
+        with open(presets_path) as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("Failed to load training presets from %s: %s", presets_path, exc)
+        return []
     presets = data.get("presets", [])
     _presets_cache = (presets, current_mtime)
     return presets

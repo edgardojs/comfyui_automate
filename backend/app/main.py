@@ -53,7 +53,12 @@ app.add_middleware(
 
 @app.middleware("http")
 async def limit_request_body_size(request: Request, call_next):
-    """Reject requests with body larger than MAX_REQUEST_BODY_SIZE."""
+    """Reject requests with body larger than MAX_REQUEST_BODY_SIZE.
+
+    Checks Content-Length header first for efficiency, then also enforces
+    the limit on streaming/chunked bodies by reading up to the limit.
+    """
+    # Fast path: check Content-Length header
     if request.headers.get("content-length"):
         try:
             content_length = int(request.headers["content-length"])
@@ -64,6 +69,16 @@ async def limit_request_body_size(request: Request, call_next):
                 )
         except (ValueError, TypeError):
             pass
+
+    # For chunked/streaming bodies (no Content-Length), consume and enforce limit
+    if not request.headers.get("content-length") and request.method in ("POST", "PUT", "PATCH"):
+        body = await request.body()
+        if len(body) > MAX_REQUEST_BODY_SIZE:
+            return JSONResponse(
+                status_code=413,
+                content={"detail": f"Request body too large. Maximum size is {MAX_REQUEST_BODY_SIZE // (1024 * 1024)} MB."},
+            )
+
     return await call_next(request)
 
 # Register API routers
