@@ -1062,4 +1062,13 @@
 | FE-L14 | `frontend/src/App.jsx` | ~L30 | **Low** | **`generateMode` state defaults to `'single'` but is not persisted**: If the user switches to "Pose Batch" mode and refreshes, they're back to "Single Generate". | Persist `generateMode` to `localStorage` or URL params. |
 | FE-L15 | `frontend/src/components/PromptHistory.jsx` | ~L80 | **Low** | **`handleFavorite` optimistically updates UI before server response**: The `setItems` call updates the favorite status immediately, but if the API call fails, the UI shows the wrong state. The catch block only shows a toast, not a rollback. | Roll back the optimistic update in the catch block by reverting `setItems`. |
 
+## Runtime Bug Found During Testing (2026-05-20)
+
+### 🔴 HIGH Severity
+
+| # | File | Severity | Issue | Fix Applied |
+|---|------|----------|-------|-------------|
+| RT-H1 | `backend/app/core/randomizer.py` ~L275 | **High** ✅ Fixed | **`generate_variations` overwrites user-selected attributes with random values**: When generating variations, the code randomized ALL unlocked fields, even those the user explicitly selected. This meant selecting "Rogue" for class would be ignored — the prompt would use a random class instead. The comment even said "even if they had a value". | ✅ Changed `generate_variations` to only randomize fields that the user did NOT explicitly set (i.e., `None` or empty in `base_attributes`). User-selected values are now preserved across variations. Locked fields continue to work as before. Added 2 regression tests in `test_randomizer.py`. |
+| RT-H2 | `frontend/src/App.jsx` ~L401 | **High** ✅ Fixed | **"🎲 Single Generate" button does nothing — only switches mode tab**: The button called `setGenerateMode('single')` which only toggles the view mode. Users expected clicking it to generate a prompt. | ✅ Changed `onClick` to also call `handleGenerate()`, so clicking "Single Generate" both switches to single mode AND generates a prompt immediately. |
+
 | 130 | 2026-05-17 | `frontend/src/api/client.js` | **Info** | **No authentication/authorization on API calls**: Fine for a local development tool but would need addressing for production deployment. (Previously documented as #83.) | By design for MVP. |

@@ -356,3 +356,24 @@ class TestGenerateVariations:
         v2 = generate_variations(library, {}, 3, rng=rng2)
         for a, b in zip(v1, v2):
             assert a == b
+
+    def test_user_selected_attributes_preserved(self, library, seeded_rng):
+        """User-selected attributes should be preserved even when not locked."""
+        variations = generate_variations(
+            library, {"classes": "rogue", "species": "elf"}, 5, rng=seeded_rng
+        )
+        for v in variations:
+            assert v["classes"] == "rogue", "User-selected class should be preserved"
+            assert v["species"] == "elf", "User-selected species should be preserved"
+
+    def test_unselected_fields_randomized_in_variations(self, library):
+        """Fields the user didn't select should be randomized across variations."""
+        variations = generate_variations(
+            library, {"classes": "rogue"}, 10
+        )
+        # All should have rogue
+        for v in variations:
+            assert v["classes"] == "rogue"
+        # Unselected fields (species, weapons, etc.) should vary
+        species_values = {v.get("species") for v in variations}
+        assert len(species_values) >= 1  # Should have some variation

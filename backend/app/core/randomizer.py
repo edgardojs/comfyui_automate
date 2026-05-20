@@ -245,14 +245,19 @@ def generate_variations(
         # Start from base attributes
         current: dict[str, str | None] = dict(base_attributes)
 
-        # For unlocked fields, randomize (even if they had a value)
+        # For unlocked fields that the user did NOT explicitly set,
+        # randomize them. User-selected values are preserved unless
+        # the field is locked (locked fields are handled by
+        # fill_unselected_attributes below).
         for category in library.categories:
             cat_id = category.id
             if cat_id not in locked_fields:
-                # Randomize this field
-                attr = select_random_attribute(library, cat_id, rng=rng)
-                if attr is not None:
-                    current[cat_id] = attr.id
+                base_value = base_attributes.get(cat_id)
+                if not base_value:
+                    # User didn't select a value — randomize
+                    attr = select_random_attribute(library, cat_id, rng=rng)
+                    if attr is not None:
+                        current[cat_id] = attr.id
 
         # Fill any remaining None values
         filled = fill_unselected_attributes(library, current, locked_fields, rng=rng)

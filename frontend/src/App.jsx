@@ -7,8 +7,9 @@ import PromptHistory from './components/PromptHistory'
 import ComfyUISettings from './pages/ComfyUISettings'
 import CharactersPage from './pages/CharactersPage'
 import ErrorBoundary from './components/ErrorBoundary'
-import { generatePrompts, submitToComfyUI } from './api/client'
+import { generatePrompts, submitToComfyUI, fetchComfyUIHistory, buildComfyUIImageUrl, fetchComfyUIClientId } from './api/client'
 import { loadComfyUISettings } from './api/comfyuiSettings'
+import { ComfyUIWebSocket } from './api/comfyuiWs'
 import PoseBatchGenerator from './components/PoseBatchGenerator'
 
 /**
@@ -53,6 +54,12 @@ function App() {
   const [comfyUISubmitting, setComfyUISubmitting] = useState(false)
   const [comfyUIResult, setComfyUIResult] = useState(null) // { index, success, message, promptId }
 
+  // --- ComfyUI generation progress state ---
+  const [comfyUIProgress, setComfyUIProgress] = useState(null)
+  // { promptId, status: 'connecting'|'connected'|'generating'|'done'|'error', step, maxStep, images, errorMessage, nodeId }
+  const comfyUIWsRef = useRef(null)
+  const comfyUIPollRef = useRef(null)
+
   // Lift ComfyUI settings to App-level state so handleSendToComfyUI
   // doesn't need to read from localStorage on every call
   const [comfyUISettings, setComfyUISettings] = useState(() => loadComfyUISettings())
@@ -60,6 +67,8 @@ function App() {
   useEffect(() => {
     return () => {
       if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
+      if (comfyUIWsRef.current) comfyUIWsRef.current.disconnect()
+      if (comfyUIPollRef.current) clearTimeout(comfyUIPollRef.current)
     }
   }, [])
 
@@ -159,6 +168,17 @@ function App() {
 
     setComfyUISubmitting(true)
     setComfyUIResult(null)
+    setComfyUIProgress(null)
+
+    // Clean up any previous WebSocket connection
+    if (comfyUIWsRef.current) {
+      comfyUIWsRef.current.disconnect()
+      comfyUIWsRef.current = null
+    }
+    if (comfyUIPollRef.current) {
+      clearTimeout(comfyUIPollRef.current)
+      comfyUIPollRef.current = null
+    }
 
     try {
       const nodeMapping = {
@@ -172,12 +192,21 @@ function App() {
         nodeMapping.seed_input_name = settings.seedInputName || 'seed'
       }
 
+      // Get a client ID for WebSocket tracking
+      let clientId
+      try {
+        clientId = await fetchComfyUIClientId()
+      } catch {
+        clientId = crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`
+      }
+
       const result = await submitToComfyUI({
         serverUrl: settings.serverUrl,
         workflowJson: workflowObj,
         positivePrompt: item.positive_prompt,
         negativePrompt: item.negative_prompt,
         nodeMapping,
+        clientId,
       })
 
       // Use stable index based on positive_prompt content instead of object reference
@@ -188,6 +217,103 @@ function App() {
         message: result.message,
         promptId: result.prompt_id,
       })
+
+      if (result.success && result.prompt_id) {
+        // Start tracking progress via WebSocket
+        setComfyUIProgress({
+          promptId: result.prompt_id,
+          status: 'connecting',
+          step: 0,
+          maxStep: 0,
+          images: [],
+          errorMessage: null,
+          nodeId: null,
+        })
+
+        try {
+          const ws = new ComfyUIWebSocket(settings.serverUrl, clientId)
+
+          ws.onStatusChange = (status) => {
+            setComfyUIProgress(prev => prev ? { ...prev, status: status === 'connected' ? 'generating' : status } : null)
+          }
+
+          ws.onProgress = (step, maxStep) => {
+            setComfyUIProgress(prev => prev ? { ...prev, step, maxStep, status: 'generating' } : null)
+          }
+
+          ws.onNodeExecuting = (nodeId, promptId) => {
+            setComfyUIProgress(prev => prev ? { ...prev, nodeId: nodeId || null } : null)
+          }
+
+          ws.onComplete = async (promptId) => {
+            setComfyUIProgress(prev => prev ? { ...prev, status: 'fetching', step: prev.maxStep, maxStep: prev.maxStep } : null)
+
+            // Fetch history to get output images
+            try {
+              const history = await fetchComfyUIHistory(promptId, settings.serverUrl)
+              const images = (history.outputs?.images || []).map(img => ({
+                ...img,
+                url: buildComfyUIImageUrl(img, settings.serverUrl),
+              }))
+              setComfyUIProgress(prev => prev ? { ...prev, status: 'done', images } : null)
+              showToast('✅ Image generated! Check the results below.')
+            } catch {
+              // History fetch failed — still mark as done
+              setComfyUIProgress(prev => prev ? { ...prev, status: 'done', images: [] } : null)
+              showToast('✅ Generation complete (could not fetch images)')
+            }
+
+            // Disconnect WebSocket after completion
+            ws.disconnect()
+          }
+
+          ws.onError = (errorMessage) => {
+            // Only show error for generation errors, not connection failures
+            // Connection failures are handled by the catch block below (fallback to polling)
+            if (comfyUIWsRef.current === ws) {
+              // This is still our active WebSocket — it's a generation error
+              setComfyUIProgress(prev => prev ? { ...prev, status: 'error', errorMessage } : null)
+              showToast('❌ ComfyUI generation error: ' + errorMessage)
+              ws.disconnect()
+            }
+          }
+
+          comfyUIWsRef.current = ws
+          await ws.connect()
+        } catch {
+          // WebSocket connection failed — fall back to polling
+          setComfyUIProgress(prev => prev ? { ...prev, status: 'polling' } : null)
+
+          const pollStatus = async () => {
+            try {
+              const history = await fetchComfyUIHistory(result.prompt_id, settings.serverUrl)
+              if (history.status === 'done' && history.outputs?.images?.length > 0) {
+                const images = history.outputs.images.map(img => ({
+                  ...img,
+                  url: buildComfyUIImageUrl(img, settings.serverUrl),
+                }))
+                setComfyUIProgress(prev => prev ? { ...prev, status: 'done', images } : null)
+                showToast('✅ Image generated! Check the results below.')
+                return // Stop polling
+              }
+              if (history.status === 'done') {
+                // Done but no images — might still be processing
+                setComfyUIProgress(prev => prev ? { ...prev, status: 'done', images: [] } : null)
+                showToast('✅ Generation complete (no images found in output)')
+                return // Stop polling
+              }
+              // Still running — poll again in 3 seconds
+              comfyUIPollRef.current = setTimeout(pollStatus, 3000)
+            } catch {
+              // Poll failed — try again in 3 seconds (up to ~2 minutes)
+              comfyUIPollRef.current = setTimeout(pollStatus, 3000)
+            }
+          }
+          // Start polling after a short delay to give ComfyUI time to start
+          comfyUIPollRef.current = setTimeout(pollStatus, 2000)
+        }
+      }
+
       showToast(result.success ? '🚀 Sent to ComfyUI!' : '❌ ComfyUI submission failed')
     } catch (err) {
       const index = results?.items?.findIndex(i => i.positive_prompt === item.positive_prompt) ?? 0
@@ -272,7 +398,7 @@ function App() {
               {/* Mode Tabs */}
               <div className="flex gap-2">
                 <button
-                  onClick={() => setGenerateMode('single')}
+                  onClick={() => { setGenerateMode('single'); handleGenerate(); }}
                   className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors cursor-pointer ${
                     generateMode === 'single'
                       ? 'bg-indigo-600 text-white'
@@ -312,6 +438,7 @@ function App() {
                 onSendToComfyUI={handleSendToComfyUI}
                 comfyUISubmitting={comfyUISubmitting}
                 comfyUIResult={comfyUIResult}
+                comfyUIProgress={comfyUIProgress}
                 loraTriggerToken={loraSelection?.triggerToken || null}
               />
               </>) : (

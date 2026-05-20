@@ -269,18 +269,21 @@ export async function submitToComfyUI({
   negativePrompt,
   nodeMapping,
   seed,
+  clientId,
 }) {
+  const body = {
+    server_url: serverUrl,
+    workflow_json: workflowJson,
+    positive_prompt: positivePrompt,
+    negative_prompt: negativePrompt,
+    node_mapping: nodeMapping,
+    seed: seed ?? null,
+  };
+  if (clientId) body.client_id = clientId;
   const res = await fetchWithTimeout(`${API_BASE}/comfyui/submit`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      server_url: serverUrl,
-      workflow_json: workflowJson,
-      positive_prompt: positivePrompt,
-      negative_prompt: negativePrompt,
-      node_mapping: nodeMapping,
-      seed: seed ?? null,
-    }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) {
     let detail = `Submission failed: ${res.status}`;
@@ -311,6 +314,60 @@ export async function checkComfyUIStatus(promptId, serverUrl) {
   const res = await fetchWithTimeout(url);
   if (!res.ok) throw new Error(`Status check failed: ${res.status}`);
   return safeJson(res);
+}
+
+/**
+ * Fetch detailed generation history from ComfyUI (including output images).
+ * @param {string} promptId - The prompt ID to look up
+ * @param {string} serverUrl - ComfyUI server URL
+ * @returns {Promise<object>} History detail with status, outputs, and images
+ */
+export async function fetchComfyUIHistory(promptId, serverUrl) {
+  const params = new URLSearchParams({ server_url: serverUrl });
+  const res = await fetchWithTimeout(
+    `${API_BASE}/comfyui/history/${encodeURIComponent(promptId)}?${params.toString()}`,
+    {},
+    30_000 // 30s timeout for history fetch
+  );
+  if (!res.ok) {
+    let detail = `History fetch failed: ${res.status}`;
+    try {
+      const errBody = await res.json();
+      if (errBody.detail) detail = errBody.detail;
+    } catch { /* ignore */ }
+    throw new Error(detail);
+  }
+  return safeJson(res);
+}
+
+/**
+ * Build a URL for proxying a ComfyUI image through the backend.
+ * @param {object} imageInfo - Image info from history (filename, subfolder, type)
+ * @param {string} serverUrl - ComfyUI server URL
+ * @returns {string} URL to fetch the image through the backend proxy
+ */
+export function buildComfyUIImageUrl(imageInfo, serverUrl) {
+  const params = new URLSearchParams({
+    server_url: serverUrl,
+    filename: imageInfo.filename,
+    subfolder: imageInfo.subfolder || "",
+    type: imageInfo.type || "output",
+  });
+  return `${API_BASE}/comfyui/image?${params.toString()}`;
+}
+
+/**
+ * Fetch a unique client ID for ComfyUI WebSocket connections.
+ * @returns {Promise<string>} A unique client ID
+ */
+export async function fetchComfyUIClientId() {
+  const res = await fetchWithTimeout(`${API_BASE}/comfyui/client-id`);
+  if (!res.ok) {
+    // Fallback to a local UUID
+    return crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  }
+  const data = await safeJson(res);
+  return data.client_id;
 }
 
 // ---------------------------------------------------------------------------

@@ -130,7 +130,7 @@ function PromptOptions({
                   <option key={t.id} value={t.id}>{t.label}</option>
                 ))
               : <option value="">No templates loaded</option>
-            }}
+            }
           </select>
         </div>
 
@@ -150,7 +150,7 @@ function PromptOptions({
                   <option key={p.id} value={p.id}>{p.label}</option>
                 ))
               : <option value="">No profiles loaded</option>
-            }}
+            }
           </select>
         </div>
       </div>

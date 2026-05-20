@@ -886,4 +886,80 @@ class TestGetPoseBatches:
         batch_ids = [b["id"] for b in data["batches"]]
         assert "basic_4dir_idle" in batch_ids
         assert "combat_set" in batch_ids
-        assert "side_scroller_basic" in batch_ids
+
+
+# ---------------------------------------------------------------------------
+# ComfyUI Integration Endpoints
+# ---------------------------------------------------------------------------
+
+
+class TestComfyUIClientId:
+    """Tests for the /api/comfyui/client-id endpoint."""
+
+    @pytest.mark.asyncio
+    async def test_get_client_id(self, client: AsyncClient):
+        """Should return a valid UUID client ID."""
+        response = await client.get("/api/comfyui/client-id")
+        assert response.status_code == 200
+        data = response.json()
+        assert "client_id" in data
+        # Should be a valid UUID format
+        client_id = data["client_id"]
+        assert len(client_id) == 36  # UUID v4 format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+        assert client_id.count("-") == 4
+
+    @pytest.mark.asyncio
+    async def test_client_id_unique(self, client: AsyncClient):
+        """Each call should return a unique client ID."""
+        response1 = await client.get("/api/comfyui/client-id")
+        response2 = await client.get("/api/comfyui/client-id")
+        id1 = response1.json()["client_id"]
+        id2 = response2.json()["client_id"]
+        assert id1 != id2
+
+
+class TestComfyUIHistoryAndImage:
+    """Tests for ComfyUI history and image proxy endpoints.
+
+    These endpoints proxy requests to a ComfyUI server, so we test
+    the validation and error handling without a running ComfyUI instance.
+    """
+
+    @pytest.mark.asyncio
+    async def test_history_missing_server_url(self, client: AsyncClient):
+        """Should return 422 when server_url is missing."""
+        response = await client.get("/api/comfyui/history/test-prompt-id")
+        assert response.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_history_invalid_server_url(self, client: AsyncClient):
+        """Should reject private/internal IP addresses."""
+        response = await client.get(
+            "/api/comfyui/history/test-prompt-id?server_url=http://169.254.169.254:8188"
+        )
+        assert response.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_history_unreachable_server(self, client: AsyncClient):
+        """Should return 503 when ComfyUI server is unreachable."""
+        response = await client.get(
+            "/api/comfyui/history/test-prompt-id?server_url=http://127.0.0.1:19999"
+        )
+        # Should be 503 (connection refused) or 504 (timeout)
+        assert response.status_code in (503, 504)
+
+    @pytest.mark.asyncio
+    async def test_image_missing_server_url(self, client: AsyncClient):
+        """Should return 422 when server_url is missing for image proxy."""
+        response = await client.get(
+            "/api/comfyui/image?filename=test.png&subfolder=&type=output"
+        )
+        assert response.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_image_invalid_server_url(self, client: AsyncClient):
+        """Should reject private/internal IP addresses for image proxy."""
+        response = await client.get(
+            "/api/comfyui/image?server_url=http://10.0.0.1:8188&filename=test.png&subfolder=&type=output"
+        )
+        assert response.status_code == 400

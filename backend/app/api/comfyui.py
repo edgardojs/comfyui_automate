@@ -9,10 +9,12 @@ import ipaddress
 import logging
 import os
 import socket
+import uuid
 from urllib.parse import urlparse
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.core.workflow_patcher import (
@@ -275,6 +277,11 @@ class SubmitRequest(BaseModel):
         default=None,
         description="Optional seed value. If not provided and seed_node_id is set, a random seed is used.",
     )
+    client_id: str | None = Field(
+        default=None,
+        max_length=100,
+        description="Optional client ID for WebSocket tracking of generation progress.",
+    )
 
 
 class SubmitResponse(BaseModel):
@@ -458,7 +465,12 @@ async def submit_prompt(request: SubmitRequest) -> SubmitResponse:
     url = _validate_server_url(request.server_url)
     try:
         async with _create_safe_client() as client:
-            response = await client.post(f"{url}/prompt", json={"prompt": patched})
+            # Build the payload — include client_id for WebSocket tracking if provided
+            payload = {"prompt": patched}
+            if request.client_id:
+                payload["client_id"] = request.client_id
+
+            response = await client.post(f"{url}/prompt", json=payload)
 
             if response.status_code == 200:
                 data = response.json()
@@ -562,3 +574,193 @@ async def check_status(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Unexpected error: {str(e)}",
         )
+
+
+# ---------------------------------------------------------------------------
+# Generation history detail endpoint
+# ---------------------------------------------------------------------------
+
+
+class HistoryDetailResponse(BaseModel):
+    """Detailed response from ComfyUI generation history."""
+
+    prompt_id: str = Field(..., description="The prompt ID")
+    status: str = Field(..., description="Current status: queued, running, done, error")
+    outputs: dict | None = Field(
+        default=None,
+        description="Output data from ComfyUI (images, etc.) if generation is done",
+    )
+    message: str = Field(..., description="Human-readable status message")
+
+
+@router.get(
+    "/history/{prompt_id}",
+    response_model=HistoryDetailResponse,
+    summary="Get detailed generation history from ComfyUI",
+    description="Retrieves the full generation history for a prompt, including output images.",
+)
+async def get_history_detail(
+    prompt_id: str,
+    server_url: str = Query(
+        ...,
+        description="ComfyUI server URL (required, e.g. http://127.0.0.1:8188)",
+    ),
+) -> HistoryDetailResponse:
+    """Get detailed generation history from ComfyUI.
+
+    Returns the full history entry including output filenames and
+    subfolder paths for completed generations.
+    """
+    url = _validate_server_url(server_url)
+
+    try:
+        async with _create_safe_client(timeout=30.0) as client:
+            response = await client.get(f"{url}/history/{prompt_id}")
+
+            if response.status_code == 404:
+                return HistoryDetailResponse(
+                    prompt_id=prompt_id,
+                    status="queued",
+                    outputs=None,
+                    message="Prompt not found in history — may still be queued.",
+                )
+
+            response.raise_for_status()
+            data = response.json()
+
+            if prompt_id not in data:
+                return HistoryDetailResponse(
+                    prompt_id=prompt_id,
+                    status="queued",
+                    outputs=None,
+                    message="Prompt not found in history.",
+                )
+
+            history_entry = data[prompt_id]
+            outputs = history_entry.get("outputs", {})
+
+            # Extract image info from outputs
+            images = []
+            for _node_id, node_output in outputs.items():
+                if isinstance(node_output, dict) and "images" in node_output:
+                    for img in node_output["images"]:
+                        images.append({
+                            "filename": img.get("filename", ""),
+                            "subfolder": img.get("subfolder", ""),
+                            "type": img.get("type", "output"),
+                        })
+
+            return HistoryDetailResponse(
+                prompt_id=prompt_id,
+                status="done",
+                outputs={"images": images} if images else {},
+                message="Generation completed." if images else "Generation completed (no images found).",
+            )
+
+    except httpx.ConnectError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not connect to ComfyUI server.",
+        )
+    except httpx.TimeoutException:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="ComfyUI server timed out.",
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unexpected error: {str(e)}",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Image proxy endpoint
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/image",
+    summary="Proxy an image from ComfyUI",
+    description=(
+        "Fetches an image from the ComfyUI server's /view endpoint and "
+        "streams it to the client. This avoids exposing the ComfyUI server "
+        "URL directly to the browser and works around CORS restrictions."
+    ),
+)
+async def proxy_comfyui_image(
+    server_url: str = Query(
+        ...,
+        description="ComfyUI server URL (e.g. http://127.0.0.1:8188)",
+    ),
+    filename: str = Query(
+        ...,
+        description="Filename of the image on the ComfyUI server",
+    ),
+    subfolder: str = Query(
+        "",
+        description="Subfolder path within the ComfyUI output directory",
+    ),
+    img_type: str = Query(
+        "output",
+        alias="type",
+        description="Image type: output, input, or temp",
+    ),
+) -> StreamingResponse:
+    """Proxy an image from ComfyUI's /view endpoint."""
+    url = _validate_server_url(server_url)
+
+    params = {"filename": filename, "subfolder": subfolder, "type": img_type}
+
+    try:
+        async with _create_safe_client(timeout=60.0) as client:
+            response = await client.get(f"{url}/view", params=params)
+
+            if response.status_code != 200:
+                raise HTTPException(
+                    status_code=response.status_code,
+                    detail=f"ComfyUI returned {response.status_code} for image request.",
+                )
+
+            content_type = response.headers.get("content-type", "image/png")
+            return StreamingResponse(
+                iter([response.content]),
+                media_type=content_type,
+                headers={
+                    "Cache-Control": "public, max-age=3600",
+                    "Content-Disposition": f'inline; filename="{filename}"',
+                },
+            )
+
+    except httpx.ConnectError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not connect to ComfyUI server.",
+        )
+    except httpx.TimeoutException:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="ComfyUI server timed out fetching image.",
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unexpected error fetching image: {str(e)}",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Client ID generation endpoint
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/client-id",
+    summary="Generate a unique client ID for ComfyUI WebSocket",
+    description="Returns a UUID v4 string for use as a clientId when connecting to ComfyUI's WebSocket.",
+)
+async def get_client_id() -> dict:
+    """Generate a unique client ID for ComfyUI WebSocket connections."""
+    return {"client_id": str(uuid.uuid4())}
