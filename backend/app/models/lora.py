@@ -52,6 +52,8 @@ class LoRATrainingConfig(BaseModel):
     arguments for advanced users.
     """
 
+    model_config = {"extra": "forbid"}
+
     character_id: str = Field(
         ..., description="ID of the character profile to train a LoRA for",
     )
@@ -122,9 +124,13 @@ class LoRATrainingConfig(BaseModel):
     @field_validator("character_id")
     @classmethod
     def reject_whitespace_only(cls, v: str) -> str:
-        """Reject strings that are empty or whitespace-only."""
+        """Reject strings that are empty, whitespace-only, contain null bytes, or HTML tags."""
         if not v.strip():
             raise ValueError("character_id must not be empty")
+        if "\x00" in v:
+            raise ValueError("character_id must not contain null bytes")
+        if re.search(r"<[^>]+>", v):
+            raise ValueError("character_id must not contain HTML tags")
         return v.strip()
 
     @field_validator("output_format")
@@ -195,9 +201,13 @@ class LoRATrainingConfigCreate(BaseModel):
     @field_validator("character_id")
     @classmethod
     def reject_whitespace_only(cls, v: str) -> str:
-        """Reject strings that are empty or whitespace-only."""
+        """Reject strings that are empty, whitespace-only, contain null bytes, or HTML tags."""
         if not v.strip():
             raise ValueError("character_id must not be empty")
+        if "\x00" in v:
+            raise ValueError("character_id must not contain null bytes")
+        if re.search(r"<[^>]+>", v):
+            raise ValueError("character_id must not contain HTML tags")
         return v.strip()
 
     @field_validator("output_format")
@@ -219,7 +229,6 @@ class LoRATrainingConfigCreate(BaseModel):
             return v
         if len(v) > 50:
             raise ValueError("custom_args must have at most 50 keys")
-        import re
         for key, value in v.items():
             if not re.match(r"^[a-zA-Z0-9_-]+$", key):
                 raise ValueError(
@@ -245,6 +254,8 @@ class LoRAJob(BaseModel):
     Represents a persistent training job in the database, including its
     configuration, current status, and output information.
     """
+
+    model_config = {"extra": "forbid"}
 
     job_id: str = Field(
         default_factory=_generate_job_id,
@@ -285,6 +296,8 @@ class LoRAJobSummary(BaseModel):
     Includes character name and trigger token for display in the UI.
     """
 
+    model_config = {"extra": "forbid"}
+
     job_id: str
     character_id: str
     character_name: str | None = None
@@ -310,8 +323,6 @@ class TrainingJobStatusResponse(BaseModel):
     job_id: str
     status: str
     is_running: bool
-    pid: int | None = None
-    log_path: str | None = None
 
 
 class TrainingJobLogsResponse(BaseModel):

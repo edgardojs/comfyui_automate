@@ -307,14 +307,14 @@ class TestCreateLoRAJob:
 
     @pytest.mark.asyncio
     async def test_create_job_insufficient_images(self, client: AsyncClient):
-        """Creating a job with fewer than 10 accepted images returns 400."""
+        """Creating a job with fewer than 15 accepted images returns 400."""
         cid, _ = await _create_character_with_images(client, num_images=5)
 
         response = await client.post("/api/lora/jobs", json={
             "character_id": cid,
         })
         assert response.status_code == 400
-        assert "at least 10" in response.json()["detail"]
+        assert "at least 15" in response.json()["detail"]
 
     @pytest.mark.asyncio
     async def test_create_job_missing_captions(self, client: AsyncClient):
@@ -590,8 +590,6 @@ class TestTrainingJobStatus:
         """Getting status for an existing job returns process info."""
         mock_status.return_value = {
             "is_running": False,
-            "pid": None,
-            "log_path": None,
         }
 
         cid, _ = await _create_character_with_images(client, num_images=15)
@@ -603,7 +601,6 @@ class TestTrainingJobStatus:
         data = response.json()
         assert data["job_id"] == job_id
         assert "is_running" in data
-        assert "pid" in data
 
     @pytest.mark.asyncio
     async def test_get_status_nonexistent_job(self, client: AsyncClient):

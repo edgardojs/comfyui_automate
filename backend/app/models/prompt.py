@@ -1,6 +1,8 @@
 """Pydantic models for prompt generation requests and responses."""
 
-from pydantic import BaseModel, Field
+import re
+
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class PromptGenerationRequest(BaseModel):
@@ -10,6 +12,8 @@ class PromptGenerationRequest(BaseModel):
     a variation count, locked fields that should not change across variations,
     and optional template/profile selectors.
     """
+
+    model_config = {"extra": "forbid"}
 
     attributes: dict[str, str | None] = Field(
         default_factory=dict,
@@ -31,14 +35,17 @@ class PromptGenerationRequest(BaseModel):
     )
     template_id: str | None = Field(
         default=None,
+        max_length=255,
         description="ID of the prompt template to use. Defaults to 'front_view_sprite'.",
     )
     negative_profile_id: str | None = Field(
         default=None,
+        max_length=255,
         description="ID of the negative prompt profile. Defaults to 'general_sprite_cleanup'.",
     )
     lora_trigger_token: str | None = Field(
         default=None,
+        max_length=255,
         description=(
             "Optional LoRA trigger token to prepend to every positive prompt. "
             "When provided, the trigger token is inserted at the beginning of "
@@ -47,12 +54,26 @@ class PromptGenerationRequest(BaseModel):
         ),
     )
 
+    @field_validator("lora_trigger_token")
+    @classmethod
+    def validate_trigger_token(cls, v: str | None) -> str | None:
+        """Validate lora_trigger_token is not whitespace-only and has no null bytes or HTML."""
+        if v is None:
+            return v
+        if not v.strip():
+            raise ValueError("lora_trigger_token must not be empty or whitespace-only")
+        if "\x00" in v:
+            raise ValueError("lora_trigger_token must not contain null bytes")
+        if re.search(r"<[^>]+>", v):
+            raise ValueError("lora_trigger_token must not contain HTML tags")
+        return v.strip()
+
 
 class PromptPair(BaseModel):
     """A single generated positive + negative prompt pair."""
 
-    positive_prompt: str = Field(..., description="The generated positive prompt string")
-    negative_prompt: str = Field(..., description="The generated negative prompt string")
+    positive_prompt: str = Field(..., max_length=10000, description="The generated positive prompt string")
+    negative_prompt: str = Field(..., max_length=10000, description="The generated negative prompt string")
     attributes: dict[str, str] = Field(
         default_factory=dict,
         description="The resolved attributes used to generate this prompt pair",
@@ -143,6 +164,8 @@ class PoseBatchRequest(BaseModel):
     predefined pose batch template) or custom poses/views.
     """
 
+    model_config = {"extra": "forbid"}
+
     character_id: str | None = Field(
         default=None,
         description=(
@@ -212,3 +235,16 @@ class PoseBatchRequest(BaseModel):
             "If None and ``character_id`` is provided, the character's name is used automatically."
         ),
     )
+
+    @model_validator(mode="after")
+    def validate_batch_or_poses(self) -> "PoseBatchRequest":
+        """Warn if both batch_id and poses are provided, or if neither is provided."""
+        if self.batch_id is not None and self.poses is not None:
+            # batch_id takes precedence; poses are ignored
+            import logging
+            logging.getLogger(__name__).warning(
+                "PoseBatchRequest: both batch_id and poses provided; "
+                "poses will be ignored in favor of batch_id='%s'",
+                self.batch_id,
+            )
+        return self

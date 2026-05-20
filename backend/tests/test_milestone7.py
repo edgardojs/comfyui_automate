@@ -15,6 +15,7 @@ Tests cover:
 import io
 import tempfile
 import unittest.mock
+from pathlib import Path
 
 import httpx
 import pytest
@@ -189,7 +190,7 @@ class TestCharacterModels:
         """ReferenceImage should default to pending status."""
         img = ReferenceImage(
             character_id="char_abc123",
-            file_path="/data/ref.png",
+            file_path="data/ref.png",
             original_filename="ref.png",
         )
         assert img.status == ReferenceStatus.PENDING
@@ -289,6 +290,7 @@ class TestStorage:
 
     def test_save_reference_image_valid(self):
         """save_reference_image should save a valid PNG file."""
+        from app.core.storage import SPRITE_PROJECTS_DIR
         path = save_reference_image(
             character_id="char_123",
             file_content=b"\x89PNG\r\n\x1a\n" + b"\x00" * 100,
@@ -296,7 +298,9 @@ class TestStorage:
             project_name="test_project",
             character_name="Hero",
         )
-        assert path.exists()
+        # save_reference_image returns a path relative to SPRITE_PROJECTS_DIR
+        full_path = Path(SPRITE_PROJECTS_DIR) / path
+        assert full_path.exists()
         assert path.name.endswith("test.png")
 
     def test_save_reference_image_invalid_extension(self):
@@ -320,6 +324,7 @@ class TestStorage:
 
     def test_delete_reference_image(self):
         """delete_reference_image should remove a single file."""
+        from app.core.storage import SPRITE_PROJECTS_DIR
         path = save_reference_image(
             character_id="char_123",
             file_content=b"\x89PNG\r\n\x1a\n" + b"\x00" * 50,
@@ -327,12 +332,14 @@ class TestStorage:
             project_name="test_project",
             character_name="Hero",
         )
-        assert path.exists()
+        full_path = Path(SPRITE_PROJECTS_DIR) / path
+        assert full_path.exists()
         delete_reference_image(str(path))
-        assert not path.exists()
+        assert not full_path.exists()
 
     def test_save_reference_image_path_traversal_prevention(self):
         """save_reference_image should prevent path traversal in filenames."""
+        from app.core.storage import SPRITE_PROJECTS_DIR
         # Filenames with path traversal sequences should be sanitized
         # to only use the basename, preventing writes outside the references dir
         path = save_reference_image(
@@ -343,7 +350,8 @@ class TestStorage:
             character_name="Hero",
         )
         # The file should be saved inside the references directory
-        assert path.exists()
+        full_path = Path(SPRITE_PROJECTS_DIR) / path
+        assert full_path.exists()
         # The path should NOT contain the traversal sequence
         assert "../" not in str(path)
         # The filename should only contain the basename part
@@ -351,6 +359,7 @@ class TestStorage:
 
     def test_save_reference_image_path_traversal_backslash(self):
         """save_reference_image should handle backslash path separators."""
+        from app.core.storage import SPRITE_PROJECTS_DIR
         path = save_reference_image(
             character_id="char_123",
             file_content=b"\x89PNG\r\n\x1a\n" + b"\x00" * 50,
@@ -358,7 +367,8 @@ class TestStorage:
             project_name="test_project",
             character_name="Hero",
         )
-        assert path.exists()
+        full_path = Path(SPRITE_PROJECTS_DIR) / path
+        assert full_path.exists()
         assert ".." not in str(path)
 
 
@@ -1029,13 +1039,15 @@ class TestDeletePathTraversal:
 
     def test_delete_reference_image_rejects_path_outside_project(self):
         """delete_reference_image should reject paths outside the project directory."""
-        with unittest.mock.patch("app.core.storage.SPRITE_PROJECTS_DIR", "/tmp/sprite_test"):
-            # Attempting to delete a file outside the project directory should raise ValueError
-            with pytest.raises(ValueError, match="outside project directory"):
-                delete_reference_image("/etc/passwd")
-
-            with pytest.raises(ValueError, match="outside project directory"):
-                delete_reference_image("/tmp/other_project/test.png")
+        tmpdir = tempfile.mkdtemp()
+        try:
+            with unittest.mock.patch("app.core.storage.SPRITE_PROJECTS_DIR", tmpdir):
+                # Attempting to delete a file with path traversal should raise ValueError
+                with pytest.raises(ValueError, match="outside project directory"):
+                    delete_reference_image("../../etc/passwd")
+        finally:
+            import shutil
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
     def test_delete_reference_image_allows_valid_path(self):
         """delete_reference_image should allow paths within the project directory."""
@@ -1048,7 +1060,9 @@ class TestDeletePathTraversal:
                 test_file.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 50)
 
                 # Deleting a file within the project directory should succeed
-                delete_reference_image(str(test_file))
+                # Use a relative path (relative to SPRITE_PROJECTS_DIR)
+                relative_path = test_file.relative_to(Path(tmpdir).resolve())
+                delete_reference_image(str(relative_path))
                 assert not test_file.exists()
         finally:
             import shutil

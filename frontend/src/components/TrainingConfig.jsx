@@ -27,14 +27,18 @@ import {
 
 const OUTPUT_FORMATS = ['safetensors', 'pt', 'ckpt']
 
-const DEFAULT_CONFIG = {
-  base_model: 'stabilityai/stable-diffusion-xl-base-1.0',
-  learning_rate: 0.0002,
-  epochs: 18,
-  preview_interval: 2,
-  output_format: 'safetensors',
-  lora_strength: 1.0,
+function getDefaultConfig() {
+  return {
+    base_model: 'stabilityai/stable-diffusion-xl-base-1.0',
+    learning_rate: 0.0002,
+    epochs: 18,
+    preview_interval: 2,
+    output_format: 'safetensors',
+    lora_strength: 1.0,
+  }
 }
+
+const DEFAULT_CONFIG = getDefaultConfig()
 
 function TrainingConfig({ characterId, showToast }) {
   // Presets
@@ -43,7 +47,7 @@ function TrainingConfig({ characterId, showToast }) {
   const [selectedPresetId, setSelectedPresetId] = useState('')
 
   // Config form state
-  const [config, setConfig] = useState({ ...DEFAULT_CONFIG })
+  const [config, setConfig] = useState(getDefaultConfig())
   const [customArgs, setCustomArgs] = useState('')
 
   // Dataset readiness
@@ -135,7 +139,7 @@ function TrainingConfig({ characterId, showToast }) {
       }
     } else {
       // Reset to defaults when deselecting preset
-      setConfig({ ...DEFAULT_CONFIG })
+      setConfig(getDefaultConfig())
     }
   }, [presets, config.base_model, config.lora_strength])
 
@@ -146,6 +150,16 @@ function TrainingConfig({ characterId, showToast }) {
 
   // Handle create job
   const handleCreateJob = useCallback(async () => {
+    // Validate custom args before setting loading state
+    if (customArgs.trim()) {
+      try {
+        JSON.parse(customArgs)
+      } catch {
+        showToast('❌ Custom args must be valid JSON')
+        return
+      }
+    }
+
     setCreating(true)
     try {
       const params = {
@@ -160,12 +174,7 @@ function TrainingConfig({ characterId, showToast }) {
       }
       // Add custom args if provided
       if (customArgs.trim()) {
-        try {
-          params.custom_args = JSON.parse(customArgs)
-        } catch {
-          showToast('❌ Custom args must be valid JSON')
-          return
-        }
+        params.custom_args = JSON.parse(customArgs)
       }
       // Remove undefined values
       Object.keys(params).forEach(key => params[key] === undefined && delete params[key])

@@ -19,8 +19,8 @@
     {
       "id": "ai_toolkit",
       "label": "AI Toolkit",
-      "description": "All-in-one training toolkit for Stable Diffusion LoRAs. Uses a YAML config file approach.",
-      "command_template": "python run.py --dataset_dir={dataset_dir} --output_dir={output_dir} --learning_rate={learning_rate} --max_train_epochs={epochs} --save_every_n_epochs={preview_interval}",
+      "description": "All-in-one training toolkit for Stable Diffusion LoRAs. Uses a YAML config file approach. Note: does not enable xformers by default; may require more VRAM than kohya_ss.",
+      "command_template": "python run.py --dataset_dir={dataset_dir} --output_dir={output_dir} --learning_rate={learning_rate} --max_train_epochs={epochs} --save_every_n_epochs={preview_interval} --output_name={output_name}",
       "requires_accelerate": false,
       "supported_models": ["sd1.5", "sdxl"],
       "default_args": {

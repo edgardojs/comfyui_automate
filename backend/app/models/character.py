@@ -2,7 +2,7 @@
 
 import re
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -73,6 +73,8 @@ class CharacterProfile(BaseModel):
     Each profile represents a unique character that can have reference images
     and eventually a trained LoRA for consistent generation.
     """
+
+    model_config = {"extra": "forbid"}
 
     character_id: str = Field(
         default_factory=_generate_character_id,
@@ -252,21 +254,29 @@ class ReferenceImage(BaseModel):
         description="Auto-generated unique ID for the reference image",
     )
     character_id: str = Field(
-        ..., description="ID of the character profile this image belongs to",
+        ..., min_length=1, max_length=255,
+        description="ID of the character profile this image belongs to",
     )
     file_path: str = Field(
-        ..., description="Path to the stored image file on disk",
+        ..., min_length=1, max_length=1024,
+        description="Path to the stored image file on disk",
     )
     original_filename: str = Field(
-        ..., description="Original filename as uploaded by the user",
+        ..., min_length=1, max_length=255,
+        description="Original filename as uploaded by the user",
     )
 
     @field_validator("file_path")
     @classmethod
     def validate_file_path(cls, v: str) -> str:
-        """Reject paths with directory traversal components."""
+        """Reject paths with directory traversal components and normalize."""
+        import os
+        # Normalize the path to handle foo/./bar, foo//bar, etc.
+        v = os.path.normpath(v)
         if ".." in v:
             raise ValueError("file_path must not contain '..' directory traversal")
+        if os.path.isabs(v):
+            raise ValueError("file_path must be a relative path, not an absolute path")
         return v
 
     @field_validator("original_filename")
@@ -291,7 +301,7 @@ class ReferenceImage(BaseModel):
         default=None, description="Reason for rejection, if status is 'rejected'",
     )
     created_at: datetime = Field(
-        default_factory=datetime.now,
+        default_factory=lambda: datetime.now(timezone.utc),
         description="Timestamp when the image was uploaded",
     )
 

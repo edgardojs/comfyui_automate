@@ -175,7 +175,7 @@ def save_reference_image(
         character_name: Character name for directory resolution.
 
     Returns:
-        Absolute path to the saved file.
+        Path to the saved file, relative to SPRITE_PROJECTS_DIR.
 
     Raises:
         ValueError: If the file extension is not an allowed image type.
@@ -192,6 +192,13 @@ def save_reference_image(
         raise ValueError(
             f"File content does not match the claimed extension '{ext}'. "
             "The file may be corrupted or disguised."
+        )
+
+    # Enforce maximum file size (defense-in-depth, also enforced at API layer)
+    if len(file_content) > MAX_FILE_SIZE:
+        raise ValueError(
+            f"File size ({len(file_content)} bytes) exceeds the maximum allowed "
+            f"size of {MAX_FILE_SIZE} bytes ({MAX_FILE_SIZE // (1024 * 1024)} MB)."
         )
 
     # Sanitize the filename to prevent path traversal attacks:
@@ -211,7 +218,8 @@ def save_reference_image(
         )
 
     dest.write_bytes(file_content)
-    return dest.resolve()
+    # Return a path relative to SPRITE_PROJECTS_DIR for portable storage
+    return dest.resolve().relative_to(Path(SPRITE_PROJECTS_DIR).resolve())
 
 
 def delete_character_files(project_name: str, character_name: str) -> None:
@@ -236,12 +244,12 @@ def delete_reference_image(file_path: str) -> None:
     before deleting, to prevent path traversal attacks.
 
     Args:
-        file_path: Absolute or relative path to the file.
+        file_path: Path to the file, relative to SPRITE_PROJECTS_DIR.
 
     Raises:
         ValueError: If the resolved path is outside the project directory.
     """
-    path = Path(file_path).resolve()
+    path = (Path(SPRITE_PROJECTS_DIR) / file_path).resolve()
     project_root = Path(SPRITE_PROJECTS_DIR).resolve()
     if not path.is_relative_to(project_root):
         raise ValueError(

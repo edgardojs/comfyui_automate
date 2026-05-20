@@ -27,6 +27,17 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
+def _get_attr(obj: Any, key: str, default: Any = None) -> Any:
+    """Get an attribute from a dict or ORM object.
+
+    Supports both dict-like objects (using ``.get()``) and ORM objects
+    (using ``getattr()``).
+    """
+    if hasattr(obj, "get"):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
+
+
 def generate_preview_prompts(
     character_profile: dict[str, Any],
     trigger_token: str,
@@ -55,11 +66,11 @@ def generate_preview_prompts(
         - ``view`` — the view angle (e.g. ``"front view"``)
         - ``pose`` — the pose description (e.g. ``"idle stance"``)
     """
-    species = character_profile.get("species") or character_profile.get("character_class", "")
-    char_class = character_profile.get("character_class") or ""
-    weapon = character_profile.get("weapon") or ""
-    art_style = character_profile.get("art_style") or "pixel art sprite"
-    target_perspective = character_profile.get("target_perspective") or [
+    species = _get_attr(character_profile, "species") or _get_attr(character_profile, "character_class", "")
+    char_class = _get_attr(character_profile, "character_class") or ""
+    weapon = _get_attr(character_profile, "weapon") or ""
+    art_style = _get_attr(character_profile, "art_style") or "pixel art sprite"
+    target_perspective = _get_attr(character_profile, "target_perspective") or [
         "front", "side", "back", "three-quarter"
     ]
 
@@ -163,13 +174,7 @@ def generate_preview_prompts(
 # Preview workflow generation
 # ---------------------------------------------------------------------------
 
-# Default negative prompt for LoRA previews
-DEFAULT_NEGATIVE_PROMPT = (
-    "blurry, cropped, out of frame, worst quality, low quality, "
-    "jpeg artifacts, ugly, duplicate, morbid, mutilated, extra fingers, "
-    "mutated hands, poorly drawn hands, poorly drawn face, deformed, "
-    "bad anatomy, bad proportions, extra limbs, cloned face, disfigured"
-)
+from app.core.constants import DEFAULT_NEGATIVE_PROMPT
 
 # Default image dimensions for sprite previews
 DEFAULT_PREVIEW_WIDTH = 512

@@ -14,6 +14,8 @@ import asyncio
 import json
 import logging
 import os
+import re
+import shlex
 import shutil
 import signal
 import uuid
@@ -24,7 +26,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.storage import get_dataset_dir, get_lora_dir, get_character_dir
+from app.core.storage import SPRITE_PROJECTS_DIR, get_dataset_dir, get_lora_dir, get_character_dir, get_references_dir
 from app.db.database import CharacterProfileRow, LoraJobRow, ReferenceImageRow
 from app.models.lora import LoRAJob, LoRAJobStatus, LoRATrainingConfig
 
@@ -186,8 +188,10 @@ async def prepare_dataset(
 
     # Copy images and write caption files
     references_root = get_references_dir(char_row.project_name, char_row.character_name)
+    skipped_images = 0
+    copied_images = 0
     for ref in accepted_refs:
-        src_path = Path(ref.file_path)
+        src_path = Path(SPRITE_PROJECTS_DIR) / ref.file_path
 
         # Validate that the source path is within the references directory
         # to prevent path traversal attacks
@@ -197,32 +201,43 @@ async def prepare_dataset(
             logger.warning(
                 "Reference image path outside references dir, skipping: %s", src_path
             )
+            skipped_images += 1
             continue
 
         if not src_path.exists():
             logger.warning("Reference image not found: %s", src_path)
+            skipped_images += 1
             continue
 
         # Copy image with image_id as filename
         dest_image = img_dir / f"{ref.image_id}{src_path.suffix}"
         shutil.copy2(src_path, dest_image)
+        copied_images += 1
 
         # Write caption file (same name with .txt extension)
         caption_path = img_dir / f"{ref.image_id}.txt"
         caption_path.write_text(ref.caption, encoding="utf-8")
+
+    # Raise error if any images were skipped — the dataset would be incomplete
+    if skipped_images > 0:
+        raise ValueError(
+            f"{skipped_images} reference image(s) were skipped (missing files or "
+            "path traversal detected). Fix the dataset before training. "
+            f"{copied_images} of {len(accepted_refs)} images were copied successfully."
+        )
 
     # Write metadata.json
     metadata = {
         "job_id": job_id,
         "character_id": character_id,
         "trigger_token": char_row.trigger_token,
-        "num_images": len(accepted_refs),
+        "num_images": copied_images,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     metadata_path = dataset_dir / "metadata.json"
     metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
-    logger.info("Prepared dataset for job %s: %d images in %s", job_id, len(accepted_refs), img_dir)
+    logger.info("Prepared dataset for job %s: %d images in %s", job_id, copied_images, img_dir)
     return dataset_dir
 
 
@@ -295,7 +310,6 @@ def generate_training_command(
     default_args = backend.get("default_args", {})
     if config.custom_args:
         # Sanitize custom_args keys: allow only alphanumeric, hyphens, underscores
-        import re
         _safe_key_pattern = re.compile(r"^[a-zA-Z0-9_-]+$")
         for key, value in config.custom_args.items():
             if not _safe_key_pattern.match(key):
@@ -323,8 +337,6 @@ def generate_training_command(
     # Format the command template with config values
     command_str = template.format(**format_vars)
 
-    # Split the base command string into list of arguments
-    import shlex
     return shlex.split(command_str) + extra_args
 
 
@@ -481,7 +493,8 @@ async def wait_for_training(job_id: str, session: AsyncSession) -> None:
                 for ext in ["*.safetensors", "*.pt"]:
                     matches = list(output_dir.glob(ext))
                     if matches:
-                        row.output_lora_path = str(matches[-1])  # type: ignore[assignment]
+                        # Select the most recently modified file instead of last alphabetically
+                        row.output_lora_path = str(max(matches, key=lambda f: f.stat().st_mtime))  # type: ignore[assignment]
                         break
     else:
         row.status = "failed"  # type: ignore[assignment]
@@ -559,7 +572,7 @@ async def cancel_training(job_id: str) -> bool:
     return True
 
 
-def read_training_log(job_id: str, tail: int = 100) -> str | None:
+def read_training_log(job_id: str, tail: int = 100, log_path: str | Path | None = None) -> str | None:
     """Read the training log for a job.
 
     Parameters
@@ -568,24 +581,32 @@ def read_training_log(job_id: str, tail: int = 100) -> str | None:
         The training job ID.
     tail:
         Number of lines to read from the end of the log file.
+    log_path:
+        Optional explicit path to the log file. If provided, this is used
+        instead of looking up the in-memory ``_active_log_files`` dict.
+        This allows reading logs for jobs that were started before a server
+        restart, when the in-memory dict is empty.
 
     Returns
     -------
     str | None
         The last ``tail`` lines of the log, or ``None`` if no log exists.
     """
-    log_path = _active_log_files.get(job_id)
-    if log_path is None:
-        return None
+    if log_path is not None:
+        resolved_path = Path(log_path)
+    else:
+        resolved_path = _active_log_files.get(job_id)
+        if resolved_path is None:
+            return None
 
-    if not log_path.exists():
+    if not resolved_path.exists():
         return None
 
     try:
         # Use collections.deque for memory-efficient tail reading
         # instead of loading the entire file into memory
         from collections import deque
-        with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+        with open(resolved_path, "r", encoding="utf-8", errors="replace") as f:
             tail_lines = deque(f, maxlen=tail)
         # Strip trailing newlines from each line (like splitlines() does)
         return "\n".join(line.rstrip("\n").rstrip("\r") for line in tail_lines)

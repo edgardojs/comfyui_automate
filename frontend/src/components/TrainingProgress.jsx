@@ -49,6 +49,17 @@ function TrainingProgress({ jobId, showToast, onJobComplete }) {
   const refreshIntervalRef = useRef(null)
   // Track current job status via ref so the interval callback isn't stale
   const jobStatusRef = useRef(job?.status)
+  // Use refs for callbacks to avoid re-creating the interval on every callback change
+  const loadJobRef = useRef(loadJob)
+  const loadStatusRef = useRef(loadStatus)
+  const loadLogsRef = useRef(loadLogs)
+
+  // Keep callback refs in sync
+  useEffect(() => {
+    loadJobRef.current = loadJob
+    loadStatusRef.current = loadStatus
+    loadLogsRef.current = loadLogs
+  }, [loadJob, loadStatus, loadLogs])
 
   // Log container ref for auto-scroll
   const logContainerRef = useRef(null)
@@ -129,11 +140,11 @@ function TrainingProgress({ jobId, showToast, onJobComplete }) {
     // Only auto-refresh for running/pending jobs
     if (job.status === 'running' || job.status === 'pending') {
       refreshIntervalRef.current = setInterval(() => {
-        loadJob()
+        loadJobRef.current()
         // Use ref to check current status instead of stale closure value
         if (jobStatusRef.current === 'running') {
-          loadStatus()
-          loadLogs()
+          loadStatusRef.current()
+          loadLogsRef.current()
         }
       }, 5000)
     }
@@ -143,7 +154,7 @@ function TrainingProgress({ jobId, showToast, onJobComplete }) {
         clearInterval(refreshIntervalRef.current)
       }
     }
-  }, [autoRefresh, job?.status, loadJob, loadStatus, loadLogs])
+  }, [autoRefresh, job?.status])
 
   // Auto-scroll logs
   useEffect(() => {

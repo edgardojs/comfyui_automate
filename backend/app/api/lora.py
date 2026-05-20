@@ -8,11 +8,14 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel, Field
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.caption_generator import get_training_preset, load_training_presets
+from app.core.constants import DEFAULT_BASE_MODEL
+from app.core.dataset_validator import MINIMUM_ACCEPTED_IMAGES
 from app.core.storage import get_lora_dir
 from app.core.training_runner import (
     cancel_training,
@@ -46,9 +49,6 @@ from app.models.lora import (
 router = APIRouter(prefix="/api/lora", tags=["lora"])
 
 logger = logging.getLogger(__name__)
-
-# Minimum number of accepted images required to start training
-MINIMUM_ACCEPTED_IMAGES = 10
 
 
 def _row_to_job(row: LoraJobRow) -> LoRAJob:
@@ -344,6 +344,22 @@ async def start_lora_job(
                    "only 'pending' jobs can be started.",
         )
 
+    # Atomically update status to 'running' to prevent TOCTOU race condition
+    # where two concurrent requests could both start the same job
+    update_result = await session.execute(
+        update(LoraJobRow)
+        .where(LoraJobRow.job_id == job_id, LoraJobRow.status == "pending")
+        .values(status="running", updated_at=datetime.now(timezone.utc))
+    )
+    if update_result.rowcount == 0:
+        # Another request already changed the status
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Job '{job_id}' is no longer in 'pending' state.",
+        )
+    await session.commit()
+    await session.refresh(row)
+
     # Prepare the dataset
     try:
         dataset_dir = await prepare_dataset(job_id, row.character_id, session)
@@ -380,12 +396,6 @@ async def start_lora_job(
         lora_strength=row.lora_strength,  # type: ignore[arg-type]
         custom_args=row.custom_args,  # type: ignore[arg-type]
     )
-
-    # Update job status to running
-    row.status = "running"  # type: ignore[assignment]
-    row.updated_at = datetime.now(timezone.utc)
-    await session.commit()
-    await session.refresh(row)
 
     # Start the training process in the background
     try:
@@ -462,12 +472,23 @@ async def cancel_lora_job(
                    "only 'running' jobs can be cancelled.",
         )
 
+    # Atomically update status to 'failed' to prevent TOCTOU race condition
+    # where two concurrent requests could both cancel the same job
+    update_result = await session.execute(
+        update(LoraJobRow)
+        .where(LoraJobRow.job_id == job_id, LoraJobRow.status == "running")
+        .values(status="failed", updated_at=datetime.now(timezone.utc))
+    )
+    if update_result.rowcount == 0:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Job '{job_id}' is no longer in 'running' state.",
+        )
+    await session.commit()
+    await session.refresh(row)
+
     # Cancel the training process
     cancelled = await cancel_training(job_id)
-
-    # Update job status
-    row.status = "failed"  # type: ignore[assignment]
-    row.updated_at = datetime.now(timezone.utc)
 
     # Append cancellation info to log
     cancel_msg = "\n\n[Training cancelled by user]"
@@ -493,7 +514,7 @@ async def cancel_lora_job(
     summary="Get training job status",
     description=(
         "Get real-time training status for a job, including whether the "
-        "training process is running, the process ID, and the log file path."
+        "training process is currently running."
     ),
     responses={404: {"description": "Job not found"}},
 )
@@ -520,8 +541,6 @@ async def get_training_job_status(
         job_id=job_id,
         status=row.status,
         is_running=process_status["is_running"],
-        pid=process_status.get("pid"),
-        log_path=process_status.get("log_path"),
     )
 
 
@@ -926,6 +945,16 @@ async def get_lora_metadata(
 # ---------------------------------------------------------------------------
 
 
+class ExportLoraRequest(BaseModel):
+    """Request body for exporting a LoRA to ComfyUI."""
+
+    comfyui_lora_dir: str = Field(
+        ...,
+        max_length=500,
+        description="Path to ComfyUI's models/loras/ directory",
+    )
+
+
 @router.post(
     "/jobs/{job_id}/export",
     summary="Export trained LoRA to ComfyUI",
@@ -941,10 +970,7 @@ async def get_lora_metadata(
 )
 async def export_lora_to_comfyui(
     job_id: str,
-    comfyui_lora_dir: str = Query(
-        ...,
-        description="Path to ComfyUI's models/loras/ directory",
-    ),
+    body: ExportLoraRequest,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """Export a trained LoRA to ComfyUI's models directory.
@@ -953,12 +979,14 @@ async def export_lora_to_comfyui(
     ----------
     job_id:
         The training job ID.
-    comfyui_lora_dir:
-        Path to ComfyUI's ``models/loras/`` directory.
+    body:
+        Request body containing ``comfyui_lora_dir`` path.
     session:
         Async database session.
     """
     from pathlib import Path as PathLib
+
+    comfyui_lora_dir = body.comfyui_lora_dir
 
     # Validate comfyui_lora_dir to prevent arbitrary file write
     comfyui_path = PathLib(comfyui_lora_dir).resolve()
@@ -1207,7 +1235,7 @@ def _build_config(body: LoRATrainingConfigCreate) -> LoRATrainingConfig:
     config_dict: dict = {
         "character_id": body.character_id,
         "preset_id": body.preset_id,
-        "base_model": "stabilityai/stable-diffusion-xl-base-1.0",
+        "base_model": DEFAULT_BASE_MODEL,
         "learning_rate": 0.0002,
         "epochs": 18,
         "preview_interval": 2,

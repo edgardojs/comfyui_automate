@@ -330,11 +330,12 @@ async def delete_character(
             detail=f"Character profile '{character_id}' not found",
         )
 
-    # Delete character files from disk before removing the DB record
-    delete_character_files(row.project_name, row.character_name)  # type: ignore[arg-type]
-
+    # Delete character from DB first, then files after commit succeeds
     await session.delete(row)
     await session.commit()
+
+    # Delete character files from disk after DB commit to avoid orphaned records
+    delete_character_files(row.project_name, row.character_name)  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------

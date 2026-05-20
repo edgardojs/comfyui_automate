@@ -1,5 +1,6 @@
 """Pydantic models for preset creation and management."""
 
+import re
 import uuid
 from datetime import datetime
 
@@ -18,11 +19,15 @@ class Preset(BaseModel):
     and generation settings.
     """
 
+    model_config = {"extra": "forbid"}
+
     preset_id: str = Field(
         default_factory=_generate_preset_id,
+        min_length=1,
+        max_length=255,
         description="Auto-generated unique ID for the preset",
     )
-    name: str = Field(..., description="Human-readable name for the preset")
+    name: str = Field(..., min_length=1, max_length=255, description="Human-readable name for the preset")
     attributes: dict[str, str | None] = Field(
         default_factory=dict,
         description="Selected attributes keyed by category",
@@ -45,6 +50,18 @@ class Preset(BaseModel):
     updated_at: datetime | None = Field(
         default=None, description="Timestamp when the preset was last updated"
     )
+
+    @field_validator("preset_id")
+    @classmethod
+    def validate_preset_id(cls, v: str) -> str:
+        """Validate preset_id is not empty, whitespace-only, or containing null bytes/HTML."""
+        if not v.strip():
+            raise ValueError("preset_id must not be empty or whitespace-only")
+        if "\x00" in v:
+            raise ValueError("preset_id must not contain null bytes")
+        if re.search(r"<[^>]+>", v):
+            raise ValueError("preset_id must not contain HTML tags")
+        return v.strip()
 
 
 class PresetCreate(BaseModel):

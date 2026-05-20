@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
 import { fetchPoseBatches, generatePoseBatch, submitToComfyUI } from '../api/client'
-import { loadComfyUISettings } from '../api/comfyuiSettings'
 
 /**
  * PoseBatchGenerator — UI for generating batch prompts from pose templates.
@@ -20,6 +19,7 @@ function PoseBatchGenerator({
   templateId,
   negativeProfileId,
   characterName,
+  comfyUISettings,
   onCopy,
   showToast,
 }) {
@@ -95,8 +95,8 @@ function PoseBatchGenerator({
   const handleSendAllToComfyUI = useCallback(async () => {
     if (!batchResult?.items?.length) return
 
-    const settings = loadComfyUISettings()
-    if (!settings.serverUrl || !settings.workflowJson || !settings.positiveNodeId) {
+    const settings = comfyUISettings
+    if (!settings?.serverUrl || !settings.workflowJson || !settings.positiveNodeId) {
       showToast?.('⚠️ Configure ComfyUI settings first (Settings page)')
       return
     }

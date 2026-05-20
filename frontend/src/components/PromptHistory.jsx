@@ -16,6 +16,7 @@ function PromptHistory({ onCopy, showToast }) {
   const [retryKey, setRetryKey] = useState(0)
   const [expandedId, setExpandedId] = useState(null)
   const [loadingMore, setLoadingMore] = useState(false)
+  const loadingMoreRef = useRef(false)
   const offsetRef = useRef(0)
 
   const handleRetry = useCallback(() => {
@@ -48,8 +49,9 @@ function PromptHistory({ onCopy, showToast }) {
   }, [retryKey])
 
   const handleLoadMore = useCallback(async () => {
-    if (loadingMore) return
+    if (loadingMoreRef.current) return
     setLoadingMore(true)
+    loadingMoreRef.current = true
     try {
       const data = await fetchHistory({ limit: 20, offset: offsetRef.current })
       setItems(prev => [...prev, ...(data.items || [])])
@@ -58,8 +60,9 @@ function PromptHistory({ onCopy, showToast }) {
       showToast(`Failed to load more: ${err.message}`)
     } finally {
       setLoadingMore(false)
+      loadingMoreRef.current = false
     }
-  }, [loadingMore, showToast])
+  }, [showToast])
 
   const handleFavorite = useCallback(async (generationId) => {
     try {

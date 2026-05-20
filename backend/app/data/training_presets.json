@@ -11,7 +11,7 @@
       "preview_interval": 2,
       "output_format": "safetensors",
       "caption_style": "detailed",
-      "recommended_angles": ["front", "side", "back", "three-quarter"]
+      "recommended_angles": ["front_view", "side_view", "back_view", "three_quarter_view"]
     },
     {
       "id": "hd_2d_character",
@@ -24,7 +24,7 @@
       "preview_interval": 2,
       "output_format": "safetensors",
       "caption_style": "detailed",
-      "recommended_angles": ["front", "side", "back", "three-quarter"]
+      "recommended_angles": ["front_view", "side_view", "back_view", "three_quarter_view"]
     },
     {
       "id": "chibi_character",
@@ -37,7 +37,7 @@
       "preview_interval": 3,
       "output_format": "safetensors",
       "caption_style": "simple",
-      "recommended_angles": ["front", "side"]
+      "recommended_angles": ["front_view", "side_view"]
     },
     {
       "id": "top_down_rpg",
@@ -50,7 +50,7 @@
       "preview_interval": 2,
       "output_format": "safetensors",
       "caption_style": "detailed",
-      "recommended_angles": ["front", "side", "back"]
+      "recommended_angles": ["front_view", "side_view", "back_view"]
     },
     {
       "id": "side_scroller",
@@ -63,7 +63,7 @@
       "preview_interval": 2,
       "output_format": "safetensors",
       "caption_style": "detailed",
-      "recommended_angles": ["side"]
+      "recommended_angles": ["side_view"]
     }
   ]
 }

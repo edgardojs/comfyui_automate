@@ -186,7 +186,7 @@ async def upload_references(
     except Exception:
         # Clean up all saved files if DB commit fails
         for p in saved_paths:
-            p.unlink(missing_ok=True)
+            (Path(storage_mod.SPRITE_PROJECTS_DIR) / p).unlink(missing_ok=True)
         await session.rollback()
         raise
 
@@ -368,7 +368,7 @@ async def get_reference_file(
             detail=f"Reference image '{image_id}' not found for character '{character_id}'",
         )
 
-    file_path = Path(row.file_path)  # type: ignore[arg-type]
+    file_path = Path(storage_mod.SPRITE_PROJECTS_DIR) / row.file_path  # type: ignore[arg-type]
 
     # Security: validate the file path is within the expected project directory
     # to prevent path traversal attacks that could serve arbitrary server files.

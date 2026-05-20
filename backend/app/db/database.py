@@ -271,11 +271,11 @@ class LoraJobRow(Base):
         String, ForeignKey("character_profiles.character_id"), nullable=False
     )
     preset_id = Column(String, nullable=True)
-    base_model = Column(String, nullable=False, default="stabilityai/stable-diffusion-xl-base-1.0")
+    base_model = Column(String(512), nullable=False, default="stabilityai/stable-diffusion-xl-base-1.0")
     learning_rate = Column(Float, nullable=False, default=0.0002)
     epochs = Column(Integer, nullable=False, default=18)
     preview_interval = Column(Integer, nullable=False, default=2)
-    output_format = Column(String, nullable=False, default="safetensors")
+    output_format = Column(String(50), nullable=False, default="safetensors")
     lora_strength = Column(Float, nullable=False, default=1.0)
     custom_args = Column(JSONEncodedDict, nullable=True)
     status = Column(

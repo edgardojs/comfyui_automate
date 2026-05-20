@@ -883,7 +883,7 @@ class TestReferenceImageRow:
             row = ReferenceImageRow(
                 image_id="img_test1",
                 character_id="char_ref_test",
-                file_path="/path/to/image.png",
+                file_path="path/to/image.png",
                 original_filename="image.png",
                 status="pending",
             )
@@ -911,7 +911,7 @@ class TestReferenceImageRow:
             row = ReferenceImageRow(
                 image_id="img_status1",
                 character_id="char_status_test",
-                file_path="/path/to/image.png",
+                file_path="path/to/image.png",
                 original_filename="image.png",
             )
             session.add(row)
@@ -988,7 +988,7 @@ class TestReferenceImageRow:
             row = ReferenceImageRow(
                 image_id="img_null_angle",
                 character_id="char_null_angle",
-                file_path="/path/to/image.png",
+                file_path="path/to/image.png",
                 original_filename="image.png",
                 status="pending",
                 angle=None,
@@ -1014,14 +1014,14 @@ class TestReferenceImageRow:
             row1 = ReferenceImageRow(
                 image_id="img_unique_test",
                 character_id="char_unique_img",
-                file_path="/path/to/image1.png",
+                file_path="path/to/image1.png",
                 original_filename="image1.png",
                 status="pending",
             )
             row2 = ReferenceImageRow(
                 image_id="img_unique_test",
                 character_id="char_unique_img",
-                file_path="/path/to/image2.png",
+                file_path="path/to/image2.png",
                 original_filename="image2.png",
                 status="pending",
             )
@@ -1382,7 +1382,7 @@ class TestForeignKeyRelationships:
             img = ReferenceImageRow(
                 image_id="img_fk_test",
                 character_id="char_fk_test",
-                file_path="/path/to/image.png",
+                file_path="path/to/image.png",
                 original_filename="image.png",
                 status="pending",
             )
@@ -1529,7 +1529,7 @@ class TestColumnDefaults:
             row = ReferenceImageRow(
                 image_id="img_defaults_test",
                 character_id="char_ref_defaults",
-                file_path="/path/to/image.png",
+                file_path="path/to/image.png",
                 original_filename="image.png",
             )
             session.add(row)

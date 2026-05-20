@@ -20,9 +20,9 @@ from app.db.database import init_db
 
 # CORS origins — configurable via CORS_ORIGINS env var (comma-separated)
 # Defaults to common local dev servers
-CORS_ORIGINS = os.environ.get(
+CORS_ORIGINS = [o.strip() for o in os.environ.get(
     "CORS_ORIGINS", "http://localhost:5173,http://localhost:3000"
-).split(",")
+).split(",")]
 
 # Maximum request body size (10 MB)
 MAX_REQUEST_BODY_SIZE = 10 * 1024 * 1024

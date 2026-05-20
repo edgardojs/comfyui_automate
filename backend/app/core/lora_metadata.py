@@ -238,6 +238,28 @@ def version_lora(
     ext = lora_path.suffix or ".safetensors"
     versioned_path = lora_dir / f"{versioned_name}{ext}"
 
+    # Prevent silent overwrite: if the versioned file already exists, auto-increment
+    if versioned_path.exists():
+        logger.warning(
+            "Versioned LoRA file already exists: %s. Auto-incrementing version.",
+            versioned_path.name,
+        )
+        # Find the next available version number
+        new_version = version
+        while True:
+            new_version += 1
+            new_name = _build_lora_name(
+                project_name=project_name,
+                character_name=character_name,
+                art_style=art_style,
+                version=new_version,
+            )
+            new_path = lora_dir / f"{new_name}{ext}"
+            if not new_path.exists():
+                versioned_path = new_path
+                version = new_version
+                break
+
     # Copy the LoRA file
     shutil.copy2(lora_path, versioned_path)
     logger.info("Versioned LoRA: %s → %s", lora_path.name, versioned_path.name)

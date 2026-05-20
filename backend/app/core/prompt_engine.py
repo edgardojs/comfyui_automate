@@ -6,6 +6,7 @@ then fills template placeholders to produce structured prompt strings.
 """
 
 import json
+import logging
 import uuid
 from pathlib import Path
 from typing import Any
@@ -64,6 +65,7 @@ class _DataCache:
         self._library: AttributeLibrary | None = None
         self._templates: dict[str, dict[str, Any]] | None = None
         self._negative_profiles: dict[str, dict[str, Any]] | None = None
+        self._pose_batches: dict[str, dict[str, Any]] | None = None
 
     @property
     def library(self) -> AttributeLibrary:
@@ -88,15 +90,36 @@ class _DataCache:
             self._negative_profiles = {p["id"]: p for p in raw["profiles"]}
         return self._negative_profiles
 
+    @property
+    def pose_batches(self) -> dict[str, dict[str, Any]]:
+        """Cached pose batches keyed by ID."""
+        if self._pose_batches is None:
+            raw = _load_json("pose_batches.json")
+            self._pose_batches = {b["id"]: b for b in raw.get("batches", [])}
+        return self._pose_batches
+
 
 _cache = _DataCache()
 
+logger = logging.getLogger(__name__)
+
 
 def _load_json(filename: str) -> dict[str, Any]:
-    """Load a JSON file from the data directory."""
+    """Load a JSON file from the data directory.
+
+    Returns an empty dict if the file is missing or malformed, logging
+    the error so callers don't crash with unhandled exceptions.
+    """
     path = DATA_DIR / filename
-    with path.open("r", encoding="utf-8") as f:
-        return json.load(f)
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        logger.error("Data file not found: %s", path)
+        return {}
+    except json.JSONDecodeError as exc:
+        logger.error("Invalid JSON in %s: %s", path, exc)
+        return {}
 
 
 def get_attribute_library() -> AttributeLibrary:
@@ -342,12 +365,10 @@ def generate_prompt_variations(
 def _load_pose_batches() -> dict[str, dict[str, Any]]:
     """Load pose batch definitions from the data directory.
 
-    Returns a dict keyed by batch ID.
+    Returns a dict keyed by batch ID. Uses the _DataCache for lazy
+    loading and caching instead of reading from disk on every call.
     """
-    path = DATA_DIR / "pose_batches.json"
-    with path.open("r", encoding="utf-8") as f:
-        data = json.load(f)
-    return {b["id"]: b for b in data.get("batches", [])}
+    return _cache.pose_batches
 
 
 def get_pose_batches() -> dict[str, dict[str, Any]]:

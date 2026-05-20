@@ -7,7 +7,7 @@ to history when created via the /api/prompts/generate endpoint.
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
-from sqlalchemy import desc, func, select
+from sqlalchemy import desc, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.database import PromptHistoryRow, get_session
@@ -148,11 +148,20 @@ async def toggle_favorite(
             detail=f"History entry '{generation_id}' not found",
         )
 
-    # Toggle the favorite flag on all entries in the batch
-    new_favorite = not rows[0].is_favorite
-    for row in rows:
-        row.is_favorite = new_favorite  # type: ignore[assignment]
+    # Capture the pre-update value before the atomic update
+    was_favorite = rows[0].is_favorite
+
+    # Use atomic SQL to toggle the favorite flag, preventing race conditions
+    # where two concurrent requests could both read the same value and both set to the same result
+    await session.execute(
+        update(PromptHistoryRow)
+        .where(PromptHistoryRow.generation_id == generation_id)
+        .values(is_favorite=~PromptHistoryRow.is_favorite)
+    )
     await session.commit()
+
+    # Determine the new value from the pre-update state
+    new_favorite = not was_favorite
 
     return FavoriteResponse(
         generation_id=generation_id,

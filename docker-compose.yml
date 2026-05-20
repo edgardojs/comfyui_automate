@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   postgres:
     image: postgres:16.9-alpine
@@ -12,10 +10,11 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U sprite_user -d sprite_prompt_generator"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sprite_user} -d ${POSTGRES_DB:-sprite_prompt_generator}"]
       interval: 5s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
 volumes:
   pgdata:

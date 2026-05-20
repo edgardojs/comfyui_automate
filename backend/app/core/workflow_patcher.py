@@ -10,8 +10,11 @@ ComfyUI instance.
 """
 
 import copy
+import logging
 import random
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -140,6 +143,11 @@ def ui_to_api_workflow(ui_workflow: dict[str, Any]) -> dict[str, Any]:
                     )
                 else:
                     inputs[input_name] = [str(source_node_id), source_output_idx]
+            elif link_id is not None and link_id not in links_by_id:
+                logger.warning(
+                    "Node %d input '%s' references link_id %d not found in links list, skipping",
+                    node["id"], input_name, link_id,
+                )
             elif "value" in inp and inp.get("link") is None:
                 # Unlinked input with an inline value
                 inputs[input_name] = inp["value"]

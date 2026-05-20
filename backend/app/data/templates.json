@@ -40,7 +40,7 @@
       "id": "top_down_sprite",
       "label": "Top-Down Roguelike Sprite",
       "description": "Top-down sprite for roguelike and dungeon-crawler games.",
-      "template": "{output_type}, top-down view, {species} {class}, {equipment}, {armor}, {mood}, {style}, simplified details, {palette}, small readable silhouette, {background}, game asset, tile-based",
+      "template": "{output_type}, top-down view, {species} {class}, {equipment}, {armor}, {mood}, {pose}, {style}, simplified details, {palette}, small readable silhouette, {background}, game asset, tile-based",
       "placeholders": [
         "output_type",
         "species",
@@ -48,6 +48,7 @@
         "equipment",
         "armor",
         "mood",
+        "pose",
         "palette",
         "style",
         "background"

@@ -322,6 +322,7 @@ function App() {
                 templateId={templateId}
                 negativeProfileId={negativeProfileId}
                 characterName={loraSelection?.characterName || null}
+                comfyUISettings={comfyUISettings}
                 onCopy={handleCopy}
                 showToast={showToast}
               />

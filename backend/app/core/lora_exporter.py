@@ -11,6 +11,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from app.core.constants import DEFAULT_NEGATIVE_PROMPT
 from app.core.lora_metadata import (
     _build_lora_name,
     _model_to_filename,
@@ -20,14 +21,8 @@ from app.core.lora_metadata import (
 
 logger = logging.getLogger(__name__)
 
-# Default negative prompt for LoRA-based sprite generation
-DEFAULT_SPRITE_NEGATIVE_PROMPT = (
-    "blurry, cropped, out of frame, worst quality, low quality, "
-    "jpeg artifacts, ugly, duplicate, morbid, mutilated, extra fingers, "
-    "mutated hands, poorly drawn hands, poorly drawn face, deformed, "
-    "bad anatomy, bad proportions, extra limbs, cloned face, disfigured, "
-    "background, complex background, text, watermark"
-)
+# Re-export for backward compatibility
+DEFAULT_SPRITE_NEGATIVE_PROMPT = DEFAULT_NEGATIVE_PROMPT
 
 
 # ---------------------------------------------------------------------------

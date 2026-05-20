@@ -52,7 +52,7 @@ def _make_reference(**overrides) -> ReferenceImage:
     defaults = dict(
         image_id="img_test123",
         character_id="char_test123",
-        file_path="/sprite_projects/myproject/TestHero/references/img.png",
+        file_path="sprite_projects/myproject/TestHero/references/img.png",
         original_filename="img.png",
         status=ReferenceStatus.ACCEPTED,
         angle=ReferenceAngle.FRONT,
