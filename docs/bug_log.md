@@ -1,5 +1,159 @@
 # Bug Log
 
+## ComfyUI Connection Failure from Docker (2026-06-07)
+
+### 🔴 HIGH — ComfyUI test-connection returns 400 "private IP not allowed" from remote browser
+
+**File:** `backend/app/api/comfyui.py`  
+**Severity:** High  
+**Description:** When accessing the app from another computer on the LAN, the ComfyUI "Test Connection" button always fails with HTTP 400: "Requests to private/internal IP addresses are not allowed". The SSRF protection in `comfyui.py` blocks all RFC 1918 private IPs (10.x, 172.16.x, 192.168.x) and `host.docker.internal` (resolves to 172.17.0.1). Since the backend runs in Docker and ComfyUI runs on the host/LAN, all valid ComfyUI URLs are blocked. Additionally, UFW firewall was blocking Docker containers from reaching port 8188 on the host.  
+**Fix:** ✅ Three changes applied:
+1. Added `COMFYUI_ALLOWED_HOSTS` env var (defaults to `host.docker.internal`) to allow specific hostnames/IPs to bypass private-IP SSRF checks in both `_validate_server_url()` and `_SSRFSafeTransport`.
+2. Updated `.env` with `COMFYUI_URL=http://host.docker.internal:8188` and `COMFYUI_ALLOWED_HOSTS=host.docker.internal,192.168.1.200`.
+3. Added UFW rule: `ufw insert 2 allow from 172.16.0.0/12 to any port 8188 proto tcp` to allow Docker containers to reach ComfyUI on the host.
+
+## Containerization Fuzz Test (2026-06-03)
+
+### 🟢 LOW — Nginx accepts large headers (8KB+)
+
+**File:** `frontend/nginx.conf`  
+**Severity:** Low  
+**Description:** Nginx accepts request headers up to 8KB+ without rejection. While not a vulnerability, large headers can be used for denial-of-service attacks. The default `large_client_header_buffers` in nginx allows up to 8KB per header line.  
+**Fix:** ⬜ Consider adding `large_client_header_buffers 4 8k;` and `client_header_buffer_size 4k;` to nginx.conf for explicit control. Current behavior is acceptable for internal use.
+
+### ✅ Fuzz Test Results Summary
+
+- **0 HIGH, 0 MEDIUM, 1 LOW, 41 INFO** — all critical issues resolved
+- Path traversal attempts safely fall back to SPA (no file leakage)
+- HEAD/OPTIONS methods correctly return 405 on API endpoints
+- Upload size limit (10MB) enforced by nginx (413 response)
+- Gzip compression working on API responses
+- Security headers present: X-Content-Type-Options, X-Frame-Options, X-XSS-Protection, Referrer-Policy
+- Timezone-aware datetimes working correctly (all timestamps end with `Z`)
+- Concurrent operations: 20/20 creates, 50/50 reads, 30/30 hot-spot reads succeeded
+- Error response contract: consistent JSON `detail` key on 4xx errors
+- SPA routing: all routes correctly fall back to index.html
+- Static assets: non-existent files under `/assets/` correctly return 404
+
+---
+
+## Timezone-Aware Datetime Mismatch with PostgreSQL (2026-06-03)
+
+### 🔴 HIGH — `POST /api/characters` returns 500 due to timezone mismatch
+
+**File:** `backend/app/db/database.py`  
+**Severity:** High  
+**Description:** All SQLAlchemy models used `Column(DateTime, ...)` which creates `TIMESTAMP WITHOUT TIME ZONE` columns in PostgreSQL. However, the default values used `datetime.now(timezone.utc)` which produces timezone-aware datetimes. PostgreSQL's asyncpg driver rejects inserting timezone-aware values into `TIMESTAMP WITHOUT TIME ZONE` columns, causing a 500 error on any INSERT operation (character creation, LoRA job creation, etc.).  
+**Affected models:** `PresetRow`, `PromptHistoryRow`, `CharacterProfileRow`, `ReferenceImageRow`, `LoraJobRow` (8 columns total)  
+**Fix:** ✅ Changed all `Column(DateTime, ...)` to `Column(DateTime(timezone=True), ...)` in all 5 models. This creates `TIMESTAMP WITH TIME ZONE` columns in PostgreSQL, which properly accept timezone-aware datetimes. Database was recreated with `docker compose down -v` to apply the schema change.
+
+---
+
+## Containerization Static Code Review (2026-06-03)
+
+### 🟡 MEDIUM — Backend Dockerfile: `requirements-dev.txt` not excluded from build context
+
+**File:** `backend/Dockerfile`  
+**Severity:** Medium  
+**Description:** The production Dockerfile copies all files (`COPY . .`) including `requirements-dev.txt` if it exists in the backend directory. While the `.dockerignore` doesn't explicitly exclude it, and the Dockerfile only installs from `requirements.txt`, the dev dependencies file is still included in the build context and copied into the image, wasting space.  
+**Fix:** ✅ Added `requirements-dev.txt` to `backend/.dockerignore`.
+
+---
+
+### 🟡 MEDIUM — Frontend Dockerfile: No non-root user in production image
+
+**File:** `frontend/Dockerfile`  
+**Severity:** Medium  
+**Description:** The frontend Nginx container runs as root by default. The FRD (FR-15) requires containers to run as non-root users where feasible. While `nginx:alpine` creates a non-privileged nginx user, the master process still runs as root.  
+**Fix:** ✅ Added `USER nginx` with proper temp directory creation and ownership. Nginx now runs entirely as the `nginx` user (both master and worker processes).
+
+---
+
+### 🟡 MEDIUM — Backend Dockerfile: Application code owned by root, not appuser
+
+**File:** `backend/Dockerfile`  
+**Severity:** Medium  
+**Description:** The `COPY . .` command copies application code as root, then `USER appuser` switches. Only `/app/sprite_projects` is chowned to appuser. The application code itself remains owned by root. While this is fine for read-only execution, it means appuser cannot write to any directory under `/app` other than `sprite_projects`. If the app needs to write temporary files or logs under `/app`, it will fail.  
+**Fix:** ✅ Changed `COPY . .` to `COPY --chown=appuser:appuser . .` so all application code is owned by appuser.
+
+---
+
+### 🟢 LOW — Frontend Dockerfile: `rm -f` default.conf.bak is unnecessary
+
+**File:** `frontend/Dockerfile`  
+**Severity:** Low  
+**Description:** The line `RUN rm -f /etc/nginx/conf.d/default.conf.bak` removes a file that doesn't exist in the `nginx:alpine` image. This is harmless but unnecessary.  
+**Fix:** ✅ Removed the unnecessary line.
+
+---
+
+### 🟢 LOW — Frontend Dockerfile: No `package-lock.json` guarantee
+
+**File:** `frontend/Dockerfile`  
+**Severity:** Low  
+**Description:** The `COPY package.json package-lock.json* ./` line uses a glob for `package-lock.json`, meaning if the lockfile doesn't exist, `npm ci` will fall back to `npm install` behavior. This is intentional for flexibility but could lead to non-deterministic builds.  
+**Fix:** ⬜ Acceptable as-is — the glob pattern is intentional for flexibility. `package-lock.json` should be committed to the repo.
+
+---
+
+### 🟢 LOW — Dev compose: Backend volume mount may conflict with container packages
+
+**File:** `docker-compose.dev.yml`  
+**Severity:** Low  
+**Description:** The dev override mounts `./backend:/app`, which replaces the entire `/app` directory including the installed Python packages. This means the dev container relies on the host having the correct Python environment or needs to install packages at startup.  
+**Fix:** ✅ Added a comment to `docker-compose.dev.yml` noting that `pip install -r requirements.txt` may need to be run inside the dev container.
+
+---
+
+### 🟢 LOW — Nginx: `proxy_read_timeout` may be too short for LoRA training
+
+**File:** `frontend/nginx.conf`  
+**Severity:** Low  
+**Description:** The `proxy_read_timeout 120s` may be insufficient for long-running LoRA training status checks or preview generation requests. ComfyUI operations can take several minutes.  
+**Fix:** ✅ Increased `proxy_read_timeout` from `120s` to `300s`.
+
+---
+
+### 🟢 LOW — `.env.example` contains placeholder password in DATABASE_URL
+
+**File:** `.env.example`  
+**Severity:** Low  
+**Description:** The `DATABASE_URL` contains `CHANGE_ME_strong_password_here` which must be manually updated to match `POSTGRES_PASSWORD`. If they don't match, the backend will fail to connect to PostgreSQL.  
+**Fix:** ✅ Added a comment: `IMPORTANT: The password in DATABASE_URL must match POSTGRES_PASSWORD above`.
+
+---
+
+### 🟢 LOW — Backend health check uses Python one-liner
+
+**File:** `docker-compose.yml`  
+**Severity:** Low  
+**Description:** The backend health check uses `python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"`. This works but requires Python in the runtime image (which it does have). A lighter alternative would be to install `curl` or use a dedicated health check endpoint that doesn't require Python evaluation.  
+**Fix:** ⬜ Acceptable as-is — the image already has Python, and adding `curl` would increase image size.
+
+---
+
+### 🟢 LOW — Frontend dev Dockerfile uses `npm install` instead of `npm ci`
+
+**File:** `frontend/Dockerfile.dev`  
+**Severity:** Low  
+**Description:** The dev Dockerfile uses `npm install` instead of `npm ci`. This is intentional for dev mode (where lockfiles may not be present), but could lead to slightly different dependency versions.  
+**Fix:** ⬜ Acceptable for dev mode.
+
+---
+
+### ✅ INFO — No issues found with:
+
+- `docker-compose.yml` — Proper service dependencies, health checks, network isolation
+- `docker-compose.gpu.yml` — Clean GPU override
+- `docker-compose.dev.yml` — Proper override structure, avoids auto-apply
+- `.dockerignore` files — Appropriate exclusions
+- `.gitignore` — Properly excludes `.env` and `docker-compose.override.yml`
+- `nginx.conf` — Correct deferred DNS resolution with `$backend_upstream` variable
+- Backend code changes — `COMFYUI_URL` fallback and `LOG_LEVEL` are clean implementations
+- Test changes — Correctly updated to expect 400 instead of 422
+
+---
+
 ## Full Project Static Code Review — Round 3 (2026-05-19)
 
 ### 🔴 HIGH Severity

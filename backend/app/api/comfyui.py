@@ -31,6 +31,53 @@ router = APIRouter(prefix="/api/comfyui", tags=["comfyui"])
 # Timeout for ComfyUI HTTP requests (seconds). Configurable via COMFYUI_TIMEOUT env var.
 COMFYUI_TIMEOUT = float(os.environ.get("COMFYUI_TIMEOUT", "10.0"))
 
+# Default ComfyUI server URL. When set, this value is used as a fallback when
+# server_url is not provided in API requests. Configurable via COMFYUI_URL env var.
+COMFYUI_URL = os.environ.get("COMFYUI_URL", "")
+
+# Hostnames and IPs that are allowed to bypass private-IP SSRF checks.
+# This is necessary because ComfyUI typically runs on the same machine or LAN
+# as the backend. When the backend runs inside Docker, it needs to reach
+# ComfyUI on the host (via host.docker.internal) or on the local network.
+# Configurable via COMFYUI_ALLOWED_HOSTS env var (comma-separated).
+# Defaults to host.docker.internal which is Docker's standard host gateway.
+_ALLOWED_HOSTS: set[str] = {
+    h.strip()
+    for h in os.environ.get(
+        "COMFYUI_ALLOWED_HOSTS", "host.docker.internal"
+    ).split(",")
+    if h.strip()
+}
+
+
+def _resolve_server_url(server_url: str | None) -> str:
+    """Resolve the ComfyUI server URL from a request or the environment default.
+
+    If ``server_url`` is provided, it is stripped of whitespace and returned.
+    Otherwise the ``COMFYUI_URL`` environment variable is used as a fallback.
+    If neither is available, an HTTP 400 error is raised.
+
+    Args:
+        server_url: The server URL from the request body, or ``None``.
+
+    Returns:
+        The resolved server URL string.
+
+    Raises:
+        HTTPException: If no server URL is available.
+    """
+    if server_url:
+        return server_url.strip()
+    if COMFYUI_URL:
+        return COMFYUI_URL
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=(
+            "server_url is required when no COMFYUI_URL environment variable is set. "
+            "Either provide server_url in the request or set COMFYUI_URL."
+        ),
+    )
+
 
 # ---------------------------------------------------------------------------
 # SSRF protection
@@ -61,7 +108,8 @@ def _is_private_ip(ip_str: str) -> bool:
     """Check if an IP address falls within any blocked private/reserved network.
 
     Loopback addresses (127.0.0.0/8) are explicitly allowed since ComfyUI
-    typically runs locally.
+    typically runs locally.  IPs that resolve from hostnames in
+    ``_ALLOWED_HOSTS`` are also allowed.
 
     Args:
         ip_str: The IP address string to check.
@@ -77,6 +125,16 @@ def _is_private_ip(ip_str: str) -> bool:
     # Allow loopback — ComfyUI typically runs on localhost
     if ip.is_loopback:
         return False
+
+    # Allow IPs that belong to explicitly allowed hosts
+    for allowed in _ALLOWED_HOSTS:
+        try:
+            resolved = socket.getaddrinfo(allowed, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+            for _, _, _, _, addr in resolved:
+                if addr[0] == ip_str:
+                    return False
+        except socket.gaierror:
+            pass
 
     return any(ip in network for network in _PRIVATE_NETWORKS)
 
@@ -131,6 +189,20 @@ def _validate_server_url(url: str) -> str:
             detail=f"Requests to '{hostname}' are not allowed.",
         )
 
+    # Reject hostnames with whitespace or other invalid characters
+    if any(c.isspace() for c in hostname) or "\x00" in hostname:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid hostname '{hostname}'. Hostnames must not contain whitespace or null bytes.",
+        )
+
+    # Allow explicitly whitelisted hostnames to bypass private-IP checks.
+    # This is essential for Docker deployments where ComfyUI runs on the
+    # host or LAN and the backend needs to reach it via host.docker.internal
+    # or a LAN IP.
+    if hostname.lower() in _ALLOWED_HOSTS:
+        return normalized
+
     # Resolve hostname and check against private IP ranges.
     # This provides defense-in-depth but alone does not fully prevent DNS
     # rebinding — use _create_safe_client() for connection-time validation.
@@ -141,7 +213,12 @@ def _validate_server_url(url: str) -> str:
             if _is_private_ip(ip_str):
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Requests to private/internal IP addresses are not allowed (resolved '{hostname}' to '{ip_str}').",
+                    detail=(
+                        f"Requests to private/internal IP addresses are not allowed "
+                        f"(resolved '{hostname}' to '{ip_str}'). "
+                        f"If ComfyUI is on your local network, add '{hostname}' to the "
+                        f"COMFYUI_ALLOWED_HOSTS environment variable."
+                    ),
                 )
     except socket.gaierror:
         # DNS resolution failed — let the request proceed and httpx will
@@ -186,7 +263,7 @@ class _SSRFSafeTransport(httpx.AsyncBaseTransport):
 
         Resolves the hostname from the request URL and checks all resulting
         IPs against the blocked network list. If any resolved IP is private,
-        the request is blocked.
+        the request is blocked — unless the hostname is in the allowed list.
 
         Args:
             request: The httpx request to handle.
@@ -201,6 +278,10 @@ class _SSRFSafeTransport(httpx.AsyncBaseTransport):
         hostname = parsed.hostname
 
         if hostname:
+            # Skip SSRF checks for explicitly allowed hosts
+            if hostname.lower() in _ALLOWED_HOSTS:
+                return await httpx.AsyncHTTPTransport().handle_async_request(request)
+
             try:
                 resolved_ips = socket.getaddrinfo(
                     hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM
@@ -226,9 +307,12 @@ class _SSRFSafeTransport(httpx.AsyncBaseTransport):
 class TestConnectionRequest(BaseModel):
     """Request to test connectivity to a ComfyUI server."""
 
-    server_url: str = Field(
-        ...,
-        description="Base URL of the ComfyUI server, e.g. http://127.0.0.1:8188",
+    server_url: str | None = Field(
+        default=None,
+        description=(
+            "Base URL of the ComfyUI server, e.g. http://127.0.0.1:8188. "
+            "If not provided, falls back to the COMFYUI_URL environment variable."
+        ),
     )
 
 
@@ -246,9 +330,12 @@ class TestConnectionResponse(BaseModel):
 class SubmitRequest(BaseModel):
     """Request to submit a prompt to ComfyUI."""
 
-    server_url: str = Field(
-        ...,
-        description="Base URL of the ComfyUI server, e.g. http://127.0.0.1:8188",
+    server_url: str | None = Field(
+        default=None,
+        description=(
+            "Base URL of the ComfyUI server, e.g. http://127.0.0.1:8188. "
+            "If not provided, falls back to the COMFYUI_URL environment variable."
+        ),
     )
     workflow_json: dict = Field(
         ...,
@@ -343,8 +430,10 @@ class StatusResponse(BaseModel):
 )
 async def test_connection(request: TestConnectionRequest) -> TestConnectionResponse:
     """Test connectivity to a ComfyUI server."""
+    # Resolve server_url from request or COMFYUI_URL env var
+    resolved_url = _resolve_server_url(request.server_url)
     # Validate URL to prevent SSRF attacks
-    url = _validate_server_url(request.server_url)
+    url = _validate_server_url(resolved_url)
 
     try:
         async with _create_safe_client() as client:
@@ -409,7 +498,11 @@ async def validate_workflow_endpoint(
         converted = True
 
     issues = validate_workflow(workflow)
-    node_ids = extract_node_ids(request.workflow_json)
+    try:
+        node_ids = extract_node_ids(request.workflow_json)
+    except (TypeError, AttributeError, KeyError) as e:
+        logger.warning("Failed to extract node IDs from workflow: %s", e)
+        node_ids = []
 
     return ValidateWorkflowResponse(
         valid=len(issues) == 0,
@@ -461,8 +554,9 @@ async def submit_prompt(request: SubmitRequest) -> SubmitResponse:
             detail=str(e),
         ) from e
 
-    # Submit to ComfyUI (validate URL to prevent SSRF attacks)
-    url = _validate_server_url(request.server_url)
+    # Submit to ComfyUI (resolve server_url and validate to prevent SSRF attacks)
+    resolved_url = _resolve_server_url(request.server_url)
+    url = _validate_server_url(resolved_url)
     try:
         async with _create_safe_client() as client:
             # Build the payload — include client_id for WebSocket tracking if provided
@@ -520,14 +614,19 @@ async def submit_prompt(request: SubmitRequest) -> SubmitResponse:
 )
 async def check_status(
     prompt_id: str,
-    server_url: str = Query(
-        ...,
-        description="ComfyUI server URL (required, e.g. http://127.0.0.1:8188)",
+    server_url: str | None = Query(
+        default=None,
+        description=(
+            "ComfyUI server URL (e.g. http://127.0.0.1:8188). "
+            "If not provided, falls back to the COMFYUI_URL environment variable."
+        ),
     ),
 ) -> StatusResponse:
     """Check the status of a ComfyUI generation."""
+    # Resolve server_url from query param or COMFYUI_URL env var
+    resolved_url = _resolve_server_url(server_url)
     # Validate URL to prevent SSRF attacks
-    url = _validate_server_url(server_url)
+    url = _validate_server_url(resolved_url)
 
     try:
         async with _create_safe_client() as client:
@@ -570,9 +669,10 @@ async def check_status(
             detail="ComfyUI server timed out.",
         )
     except Exception as e:
+        logger.error("Unexpected error checking ComfyUI status: %s", e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Unexpected error: {str(e)}",
+            detail="An unexpected error occurred while checking ComfyUI status.",
         )
 
 
@@ -601,9 +701,12 @@ class HistoryDetailResponse(BaseModel):
 )
 async def get_history_detail(
     prompt_id: str,
-    server_url: str = Query(
-        ...,
-        description="ComfyUI server URL (required, e.g. http://127.0.0.1:8188)",
+    server_url: str | None = Query(
+        default=None,
+        description=(
+            "ComfyUI server URL (e.g. http://127.0.0.1:8188). "
+            "If not provided, falls back to the COMFYUI_URL environment variable."
+        ),
     ),
 ) -> HistoryDetailResponse:
     """Get detailed generation history from ComfyUI.
@@ -611,7 +714,8 @@ async def get_history_detail(
     Returns the full history entry including output filenames and
     subfolder paths for completed generations.
     """
-    url = _validate_server_url(server_url)
+    resolved_url = _resolve_server_url(server_url)
+    url = _validate_server_url(resolved_url)
 
     try:
         async with _create_safe_client(timeout=30.0) as client:
@@ -668,9 +772,10 @@ async def get_history_detail(
             detail="ComfyUI server timed out.",
         )
     except Exception as e:
+        logger.error("Unexpected error fetching ComfyUI history: %s", e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Unexpected error: {str(e)}",
+            detail="An unexpected error occurred while fetching ComfyUI history.",
         )
 
 
@@ -689,9 +794,12 @@ async def get_history_detail(
     ),
 )
 async def proxy_comfyui_image(
-    server_url: str = Query(
-        ...,
-        description="ComfyUI server URL (e.g. http://127.0.0.1:8188)",
+    server_url: str | None = Query(
+        default=None,
+        description=(
+            "ComfyUI server URL (e.g. http://127.0.0.1:8188). "
+            "If not provided, falls back to the COMFYUI_URL environment variable."
+        ),
     ),
     filename: str = Query(
         ...,
@@ -708,7 +816,25 @@ async def proxy_comfyui_image(
     ),
 ) -> StreamingResponse:
     """Proxy an image from ComfyUI's /view endpoint."""
-    url = _validate_server_url(server_url)
+    # Validate filename and subfolder to prevent path traversal
+    if ".." in filename or "/" in filename or "\\" in filename:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid filename: must not contain path separators or '..' sequences.",
+        )
+    if ".." in subfolder:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid subfolder: must not contain '..' sequences.",
+        )
+    if img_type not in ("output", "input", "temp"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid type: must be one of 'output', 'input', or 'temp'.",
+        )
+
+    resolved_url = _resolve_server_url(server_url)
+    url = _validate_server_url(resolved_url)
 
     params = {"filename": filename, "subfolder": subfolder, "type": img_type}
 
@@ -745,9 +871,10 @@ async def proxy_comfyui_image(
     except HTTPException:
         raise
     except Exception as e:
+        logger.error("Unexpected error fetching ComfyUI image: %s", e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Unexpected error fetching image: {str(e)}",
+            detail="An unexpected error occurred while fetching the image from ComfyUI.",
         )
 
 

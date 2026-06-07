@@ -110,10 +110,15 @@ comfyui_automate/
 │       │   ├── TrainingConfig.jsx  # LoRA training configuration
 │       │   └── TrainingProgress.jsx # Training job monitoring
 │       └── pages/                   # Page stubs (future routing)
-├── docker-compose.yml               # PostgreSQL service
+├── docker-compose.yml               # Production: postgres + backend + frontend
+├── docker-compose.dev.yml           # Development overrides (hot reload)
+├── docker-compose.gpu.yml           # GPU override for LoRA training
 ├── .env.example                     # Environment variable template
+├── .dockerignore                    # Root Docker build exclusions
 └── docs/
-    └── bug_log.md                   # Bug tracking log
+    ├── bug_log.md                   # Bug tracking log
+    ├── CONTAINERIZATION_FRD.md      # Containerization functional requirements
+    └── CONTAINERIZATION_IMPLEMENTATION_PLAN.md
 ```
 
 ## Tech Stack
@@ -121,11 +126,13 @@ comfyui_automate/
 | Layer | Technology |
 |-------|-----------|
 | Backend | Python 3.12+, FastAPI, Pydantic v2, SQLAlchemy (async) |
-| Database | SQLite (dev) / PostgreSQL (production via Docker) |
+| Database | PostgreSQL 16 (default) / SQLite (testing) |
 | Frontend | React 19, Vite, Tailwind CSS |
+| Reverse Proxy | Nginx (Docker) — serves frontend, proxies `/api/` to backend |
+| Containerization | Docker Compose — 3-service stack (postgres, backend, frontend) |
 | Data | JSON attribute libraries, pose batches, training presets |
 | ComfyUI | HTTP API integration for prompt submission and preview generation |
-| Testing | pytest, pytest-asyncio, httpx (670 tests) |
+| Testing | pytest, pytest-asyncio, httpx (679 tests + containerization fuzz tests) |
 
 ## Getting Started
 
@@ -164,19 +171,26 @@ cp .env.example .env
 #   POSTGRES_PASSWORD=your_strong_password_here
 ```
 
-### 3. Start the Database (Optional — PostgreSQL)
+### 3. Start the Database (PostgreSQL)
 
-If you want to use PostgreSQL instead of SQLite:
+The app uses PostgreSQL by default. Start it with Docker:
 
 ```bash
 # Start PostgreSQL container
 docker compose up -d
-
-# Set DATABASE_URL in .env
-# DATABASE_URL=postgresql+asyncpg://sprite_user:your_password@localhost:5432/sprite_prompt_generator
 ```
 
-By default, the app uses SQLite (`./sprite_prompt_generator.db`) if `DATABASE_URL` is not set.
+Verify PostgreSQL is running:
+
+```bash
+docker compose ps                    # Should show the postgres service as "healthy"
+docker compose exec postgres pg_isready  # Should print "accepting connections"
+```
+
+The default `DATABASE_URL` is `postgresql+asyncpg://sprite_user:sprite_pass@localhost:5432/sprite_prompt_generator`.
+Configure it in `.env` to match your PostgreSQL credentials.
+
+> **Note:** For local testing without PostgreSQL, set `DATABASE_URL=sqlite+aiosqlite:///:memory:` in your environment.
 
 ### 4. Run the Backend
 
@@ -212,19 +226,142 @@ PYTHONPATH=. python tests/fuzz_test.py
 PYTHONPATH=. python tests/fuzz_milestone8.py
 PYTHONPATH=. python tests/fuzz_milestone8_9.py
 PYTHONPATH=. python tests/fuzz_milestone5.py
+
+# Run containerization fuzz test (requires Docker stack running)
+python tests/fuzz_containerization.py
 ```
 
-## Environment Variables
+## Docker Deployment
+
+The application runs as a 3-service Docker Compose stack: **PostgreSQL**, **FastAPI backend**, and **Nginx + React frontend**. All services are connected via an internal bridge network.
+
+```
+                    ┌─────────────────────────────────────┐
+                    │         Docker Compose Stack          │
+                    │                                     │
+  Browser ──:8080──►│  frontend (Nginx)                   │
+                    │    ├── /        → React SPA          │
+                    │    └── /api/    → proxy → backend:8000│
+                    │                                     │
+                    │  backend (Uvicorn)                  │
+                    │    └── FastAPI on port 8000          │
+                    │                                     │
+                    │  postgres                           │
+                    │    └── PostgreSQL 16 on port 5432    │
+                    │        (exposed on 127.0.0.1 only)  │
+                    └─────────────────────────────────────┘
+```
+
+### Quick Start (Production)
+
+```bash
+# 1. Copy and configure environment
+cp .env.example .env
+# Edit .env — at minimum, change POSTGRES_PASSWORD and the matching
+# password in DATABASE_URL (see IMPORTANT note in .env.example)
+
+# 2. Build and start all services
+docker compose up -d
+
+# 3. Verify all services are healthy
+docker compose ps
+```
+
+The application will be available at **http://localhost:8080**.
+
+| Service | URL | Notes |
+|---------|-----|-------|
+| Frontend (Nginx) | `http://localhost:8080` | Serves React SPA + proxies `/api/` |
+| Backend API | `http://localhost:8080/api/` | Proxied through Nginx |
+| Backend Health | `http://localhost:8080/api/health` | Returns `{"status": "ok"}` |
+| PostgreSQL | `127.0.0.1:5432` | Direct access for debugging only |
+
+### Development Mode (Hot Reload)
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+```
+
+| Service | URL | Notes |
+|---------|-----|-------|
+| Frontend (Vite) | `http://localhost:5173` | Hot-reload enabled |
+| Backend (Uvicorn) | `http://localhost:8000` | `--reload` enabled |
+| PostgreSQL | `127.0.0.1:5432` | Same as production |
+
+> **Note:** In dev mode, the backend mounts `./backend:/app` as a volume. If you add new dependencies, run `docker compose exec backend pip install -r requirements.txt`.
+
+### GPU Mode (LoRA Training)
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+```
+
+Requires NVIDIA drivers and [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/). Adds GPU device reservation to the backend service for LoRA training acceleration.
+
+### Stopping Services
+
+```bash
+# Stop services (data is preserved in Docker volumes)
+docker compose down
+
+# Stop services AND delete all data (resets database)
+docker compose down -v
+```
+
+### Rebuilding After Code Changes
+
+```bash
+# Rebuild backend and frontend images
+docker compose build
+
+# Rebuild with no cache (full rebuild)
+docker compose build --no-cache
+
+# Rebuild and restart
+docker compose up -d --build
+```
+
+### Docker Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `POSTGRES_USER` | `sprite_user` | PostgreSQL username |
+| `POSTGRES_PASSWORD` | *(required)* | PostgreSQL password — **must match the password in `DATABASE_URL`** |
+| `POSTGRES_DB` | `sprite_prompt_generator` | PostgreSQL database name |
+| `DATABASE_URL` | *(see .env.example)* | SQLAlchemy async connection string. Use `postgres` as hostname when running in Docker |
+| `SPRITE_PROJECTS_DIR` | `/app/sprite_projects` | Root directory for project files (Docker volume) |
+| `CORS_ORIGINS` | `http://localhost:8080` | Comma-separated allowed CORS origins |
+| `COMFYUI_TIMEOUT` | `10.0` | Timeout in seconds for ComfyUI HTTP requests |
+| `COMFYUI_URL` | *(empty)* | Default ComfyUI server URL (fallback when not provided in requests). If empty, requests must include `server_url`. Use `http://host.docker.internal:8188` when ComfyUI runs on the host |
+| `COMFYUI_ALLOWED_HOSTS` | `host.docker.internal` | Comma-separated hostnames/IPs that bypass SSRF private-IP checks. Add your ComfyUI server's LAN IP/hostname here if it's on a different machine (e.g., `host.docker.internal,192.168.1.200`) |
+| `LOG_LEVEL` | `INFO` | Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL |
+
+### Container Security
+
+All production containers follow security best practices:
+
+- **Non-root users** — Backend runs as `appuser`, frontend Nginx runs as `nginx` user
+- **Multi-stage builds** — Builder stages with dev dependencies are not included in final images
+- **Security headers** — `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `X-XSS-Protection`, `Referrer-Policy`
+- **Upload limits** — Nginx enforces `client_max_body_size 10M` matching the backend limit
+- **Gzip compression** — Enabled for text-based content types
+- **Network isolation** — PostgreSQL only exposed on `127.0.0.1:5432`, not publicly
+- **Health checks** — All 3 services have Docker health checks for automatic recovery
+- **Deferred DNS** — Nginx uses `resolver 127.0.0.11` for Docker DNS, allowing backend to start in any order
+
+## Environment Variables (Non-Docker)
+
+When running outside Docker, these environment variables configure the application:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CORS_ORIGINS` | `http://localhost:5173,http://localhost:3000` | Comma-separated allowed CORS origins (whitespace is trimmed) |
-| `DATABASE_URL` | `sqlite+aiosqlite:///./sprite_prompt_generator.db` | SQLAlchemy async database URL |
+| `DATABASE_URL` | `postgresql+asyncpg://sprite_user:sprite_pass@localhost:5432/sprite_prompt_generator` | SQLAlchemy async database URL (set to `sqlite+aiosqlite:///:memory:` for local testing) |
 | `SPRITE_PROJECTS_DIR` | `./sprite_projects` | Root directory for character files, references, datasets, LoRAs, and previews |
-| `POSTGRES_USER` | `sprite_user` | PostgreSQL username (Docker) |
-| `POSTGRES_PASSWORD` | *(required)* | PostgreSQL password (Docker) |
-| `POSTGRES_DB` | `sprite_prompt_generator` | PostgreSQL database name (Docker) |
 | `COMFYUI_TIMEOUT` | `10.0` | Timeout in seconds for ComfyUI HTTP requests |
+| `COMFYUI_URL` | *(empty)* | Default ComfyUI server URL (fallback when not provided in API requests). Use `http://127.0.0.1:8188` when running natively |
+| `COMFYUI_ALLOWED_HOSTS` | `host.docker.internal` | Comma-separated hostnames/IPs that bypass SSRF private-IP checks. Not typically needed outside Docker (loopback is always allowed) |
+| `LOG_LEVEL` | `INFO` | Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL |
 
 ## API Endpoints
 
@@ -312,6 +449,8 @@ PYTHONPATH=. python tests/fuzz_milestone5.py
 
 ## Security Features
 
+### Application Security
+
 - **Path traversal protection** — All file paths are validated and normalized; absolute paths and `..` sequences are rejected
 - **File content validation** — Uploaded images are validated by magic bytes (file signatures), not just extensions
 - **File size limits** — 10MB max per file, 20 files max per upload request
@@ -321,6 +460,19 @@ PYTHONPATH=. python tests/fuzz_milestone5.py
 - **SSRF protection** — ComfyUI server URLs are validated against private IP ranges
 - **SQL injection prevention** — SQLAlchemy async with parameterized queries
 - **Atomic operations** — Race-condition-safe DB updates for job status and favorites
+- **Timezone-aware timestamps** — All datetime fields use `TIMESTAMP WITH TIME ZONE` in PostgreSQL
+
+### Container Security
+
+- **Non-root containers** — Backend runs as `appuser`, frontend Nginx runs as `nginx` user (both non-root)
+- **Multi-stage Docker builds** — Dev dependencies excluded from production images
+- **Security headers** — `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `X-XSS-Protection: 1; mode=block`, `Referrer-Policy: strict-origin-when-cross-origin`
+- **Upload limits** — Nginx enforces `client_max_body_size 10M` matching the backend limit
+- **Gzip compression** — Enabled for text-based content types
+- **Network isolation** — PostgreSQL only exposed on `127.0.0.1:5432`, not publicly accessible
+- **Health checks** — All 3 services have Docker health checks for automatic recovery
+- **Deferred DNS resolution** — Nginx uses `resolver 127.0.0.11` for Docker DNS, allowing services to start in any order
+- **`.dockerignore`** — Dev files, tests, `.env`, and `.venv` excluded from build context
 
 ## Development Roadmap
 

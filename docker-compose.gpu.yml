@@ -1,0 +1,20 @@
+# GPU override for LoRA training with NVIDIA GPU support.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+#
+# Requirements:
+#   - NVIDIA drivers installed on the host
+#   - NVIDIA Container Toolkit installed (https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/)
+#   - Docker configured with the nvidia runtime
+
+services:
+  backend:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility

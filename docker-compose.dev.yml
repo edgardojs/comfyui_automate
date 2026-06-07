@@ -1,0 +1,28 @@
+# Development override for hot-reload support.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+#
+# This file is NOT named docker-compose.override.yml to avoid
+# automatic application in production (Docker Compose auto-applies
+# that file when present).
+
+services:
+  backend:
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./backend:/app
+      - sprite_projects_data:/app/sprite_projects
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    # Note: Mounting ./backend:/app replaces the container's installed packages.
+    # If you see import errors, run: docker compose exec backend pip install -r requirements.txt
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend/src:/app/src
+      - /app/node_modules
+    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0"]

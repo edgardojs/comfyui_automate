@@ -48,6 +48,9 @@ coverage.xml
 pytest_cache/
 .pytest_cache/
 
+# Docker
+docker-compose.override.yml
+
 # MyPy / Type checking
 .mypy_cache/
 .dmypy.json

@@ -1,5 +1,6 @@
 """FastAPI application entry point for the ComfyUI Sprite Character Prompt Generator."""
 
+import logging
 import os
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
@@ -23,6 +24,15 @@ from app.db.database import init_db
 CORS_ORIGINS = [o.strip() for o in os.environ.get(
     "CORS_ORIGINS", "http://localhost:5173,http://localhost:3000"
 ).split(",")]
+
+# Log level — configurable via LOG_LEVEL env var (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+# Defaults to INFO
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
+
+# Configure root logger level
+logging.basicConfig(level=getattr(logging, LOG_LEVEL, logging.INFO))
+logger = logging.getLogger(__name__)
+logger.info("Log level set to %s", LOG_LEVEL)
 
 # Maximum request body size (10 MB)
 MAX_REQUEST_BODY_SIZE = 10 * 1024 * 1024

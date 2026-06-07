@@ -927,9 +927,10 @@ class TestComfyUIHistoryAndImage:
 
     @pytest.mark.asyncio
     async def test_history_missing_server_url(self, client: AsyncClient):
-        """Should return 422 when server_url is missing."""
+        """Should return 400 when server_url is missing and COMFYUI_URL is not set."""
         response = await client.get("/api/comfyui/history/test-prompt-id")
-        assert response.status_code == 422
+        assert response.status_code == 400
+        assert "COMFYUI_URL" in response.json()["detail"]
 
     @pytest.mark.asyncio
     async def test_history_invalid_server_url(self, client: AsyncClient):
@@ -950,11 +951,12 @@ class TestComfyUIHistoryAndImage:
 
     @pytest.mark.asyncio
     async def test_image_missing_server_url(self, client: AsyncClient):
-        """Should return 422 when server_url is missing for image proxy."""
+        """Should return 400 when server_url is missing and COMFYUI_URL is not set."""
         response = await client.get(
             "/api/comfyui/image?filename=test.png&subfolder=&type=output"
         )
-        assert response.status_code == 422
+        assert response.status_code == 400
+        assert "COMFYUI_URL" in response.json()["detail"]
 
     @pytest.mark.asyncio
     async def test_image_invalid_server_url(self, client: AsyncClient):

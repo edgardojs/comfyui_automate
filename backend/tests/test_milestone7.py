@@ -1014,10 +1014,11 @@ class TestSSRFProtection:
 
     @pytest.mark.asyncio
     async def test_check_status_requires_server_url(self, client: AsyncClient):
-        """GET /api/comfyui/status/{prompt_id} should require server_url parameter."""
+        """GET /api/comfyui/status/{prompt_id} should require server_url when COMFYUI_URL is not set."""
         response = await client.get("/api/comfyui/status/test_prompt_id")
-        # Should return 422 since server_url is now required
-        assert response.status_code == 422
+        # Should return 400 since server_url is missing and COMFYUI_URL is not set
+        assert response.status_code == 400
+        assert "COMFYUI_URL" in response.json()["detail"]
 
     @pytest.mark.asyncio
     async def test_check_status_ssrf_blocks_private_ip(self, client: AsyncClient):
@@ -1027,6 +1028,137 @@ class TestSSRFProtection:
         )
         assert response.status_code == 400
         assert "private" in response.json()["detail"].lower() or "not allowed" in response.json()["detail"].lower()
+
+
+class TestSSRFAllowedHosts:
+    """Tests for COMFYUI_ALLOWED_HOSTS bypass in SSRF protection."""
+
+    @pytest.mark.asyncio
+    async def test_allowed_host_bypasses_private_ip_check(self, client: AsyncClient):
+        """Hostnames in COMFYUI_ALLOWED_HOSTS should bypass private-IP SSRF checks."""
+        import unittest.mock
+
+        with unittest.mock.patch("app.api.comfyui._ALLOWED_HOSTS", {"my-comfyui.local"}):
+            # my-comfyui.local is in the allowed list, so even if it resolves
+            # to a private IP, the URL validation should pass (return the URL)
+            from app.api.comfyui import _validate_server_url
+
+            result = _validate_server_url("http://my-comfyui.local:8188")
+            assert result == "http://my-comfyui.local:8188"
+
+    def test_validate_server_url_blocks_private_ip_not_in_allowed_hosts(self):
+        """Private IPs not in COMFYUI_ALLOWED_HOSTS should still be blocked."""
+        from app.api.comfyui import _validate_server_url
+
+        with unittest.mock.patch("app.api.comfyui._ALLOWED_HOSTS", set()):
+            with pytest.raises(Exception) as exc_info:
+                _validate_server_url("http://192.168.1.1:8188")
+            # Should be an HTTPException with 400 status
+            assert "private" in str(exc_info.value).lower() or "not allowed" in str(exc_info.value).lower()
+
+    def test_is_private_ip_allows_resolved_allowed_host_ip(self):
+        """_is_private_ip should return False for IPs that resolve from allowed hosts."""
+        import unittest.mock
+        from app.api.comfyui import _is_private_ip
+
+        # host.docker.internal typically resolves to 172.17.0.1 on Linux
+        # We test that if an allowed host resolves to a private IP, that IP is allowed
+        with unittest.mock.patch("app.api.comfyui._ALLOWED_HOSTS", {"host.docker.internal"}):
+            # Get the actual IP that host.docker.internal resolves to
+            import socket
+            try:
+                results = socket.getaddrinfo("host.docker.internal", None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+                for _, _, _, _, addr in results:
+                    ip = addr[0]
+                    # This IP should be allowed even though it's in a private range
+                    assert _is_private_ip(ip) is False
+            except socket.gaierror:
+                # host.docker.internal not resolvable in this environment — skip
+                pass
+
+    @pytest.mark.asyncio
+    async def test_ssrf_error_message_mentions_allowed_hosts(self, client: AsyncClient):
+        """SSRF block error messages should mention COMFYUI_ALLOWED_HOSTS."""
+        response = await client.post("/api/comfyui/test", json={
+            "server_url": "http://10.0.0.1:8188/",
+        })
+        assert response.status_code == 400
+        detail = response.json()["detail"].lower()
+        assert "comfyui_allowed_hosts" in detail
+
+    @pytest.mark.asyncio
+    async def test_ssrf_safe_transport_allows_allowed_host(self):
+        """_SSRFSafeTransport should skip SSRF checks for allowed hosts."""
+        import unittest.mock
+        from app.api.comfyui import _SSRFSafeTransport
+
+        with unittest.mock.patch("app.api.comfyui._ALLOWED_HOSTS", {"my-comfyui.local"}):
+            transport = _SSRFSafeTransport()
+            request = httpx.Request("GET", "http://my-comfyui.local:8188/system_stats")
+            # This should NOT raise a ConnectError — it will try to connect
+            # (and fail because the host doesn't exist), but it should not
+            # be blocked by SSRF checks. We can't easily test the actual
+            # connection, but we can verify the bypass logic by checking
+            # that no ConnectError with "Blocked" is raised.
+            # Since the host doesn't exist, we expect a different error or
+            # we just verify the code path doesn't raise ConnectError("Blocked")
+            try:
+                await transport.handle_async_request(request)
+            except httpx.ConnectError as e:
+                # If it's an SSRF block, fail the test
+                assert "Blocked" not in str(e)
+            except Exception:
+                # Any other error is fine (connection refused, timeout, etc.)
+                pass
+
+
+class TestImageProxyFilenameValidation:
+    """Tests for filename validation in the ComfyUI image proxy endpoint."""
+
+    @pytest.mark.asyncio
+    async def test_image_proxy_rejects_path_traversal_filename(self, client: AsyncClient):
+        """Image proxy should reject filenames with '..' sequences."""
+        response = await client.get(
+            "/api/comfyui/image?filename=../../etc/passwd&server_url=http://127.0.0.1:8188"
+        )
+        assert response.status_code == 400
+        assert "filename" in response.json()["detail"].lower()
+
+    @pytest.mark.asyncio
+    async def test_image_proxy_rejects_slash_in_filename(self, client: AsyncClient):
+        """Image proxy should reject filenames with path separators."""
+        response = await client.get(
+            "/api/comfyui/image?filename=foo/bar.png&server_url=http://127.0.0.1:8188"
+        )
+        assert response.status_code == 400
+        assert "filename" in response.json()["detail"].lower()
+
+    @pytest.mark.asyncio
+    async def test_image_proxy_rejects_backslash_in_filename(self, client: AsyncClient):
+        """Image proxy should reject filenames with backslash path separators."""
+        response = await client.get(
+            "/api/comfyui/image?filename=foo\\bar.png&server_url=http://127.0.0.1:8188"
+        )
+        assert response.status_code == 400
+        assert "filename" in response.json()["detail"].lower()
+
+    @pytest.mark.asyncio
+    async def test_image_proxy_rejects_traversal_in_subfolder(self, client: AsyncClient):
+        """Image proxy should reject subfolders with '..' sequences."""
+        response = await client.get(
+            "/api/comfyui/image?filename=test.png&subfolder=../../etc&server_url=http://127.0.0.1:8188"
+        )
+        assert response.status_code == 400
+        assert "subfolder" in response.json()["detail"].lower()
+
+    @pytest.mark.asyncio
+    async def test_image_proxy_rejects_invalid_type(self, client: AsyncClient):
+        """Image proxy should reject invalid type parameter values."""
+        response = await client.get(
+            "/api/comfyui/image?filename=test.png&type=invalid&server_url=http://127.0.0.1:8188"
+        )
+        assert response.status_code == 400
+        assert "type" in response.json()["detail"].lower()
 
 
 # ---------------------------------------------------------------------------

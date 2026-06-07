@@ -1,14 +1,14 @@
 """PostgreSQL database setup with SQLAlchemy async engine and session management.
 
-Supports both PostgreSQL (production) and SQLite (testing/development) via
-the DATABASE_URL environment variable. PostgreSQL is the default and recommended
-backend, offering native support for ENUM, BOOLEAN, JSONB, and ARRAY types
+Uses PostgreSQL as the default database backend. SQLite is supported for
+local testing/development by setting DATABASE_URL to an sqlite+aiosqlite URL.
+PostgreSQL offers native support for ENUM, BOOLEAN, JSONB, and ARRAY types
 with proper constraints and indexing.
 
 Environment variables:
     DATABASE_URL: SQLAlchemy async connection string.
         Default: postgresql+asyncpg://sprite_user:sprite_pass@localhost:5432/sprite_prompt_generator
-        For testing: sqlite+aiosqlite:///:memory:
+        For local testing: sqlite+aiosqlite:///:memory:
 
 Column type notes:
     - ENUM types (reference_status, reference_angle, lora_job_status) are
@@ -49,7 +49,7 @@ from sqlalchemy.orm import DeclarativeBase
 
 DATABASE_URL = os.environ.get(
     "DATABASE_URL",
-    "sqlite+aiosqlite:///:memory:",  # Safe default; set DATABASE_URL for production
+    "postgresql+asyncpg://sprite_user:sprite_pass@localhost:5432/sprite_prompt_generator",
 )
 
 # Detect if we're using SQLite (for test/development compatibility)
@@ -182,9 +182,9 @@ class PresetRow(Base):
     negative_profile_id = Column(
         String, nullable=False, default="general_sprite_cleanup"
     )
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(
-        DateTime,
+        DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
     )
@@ -203,7 +203,7 @@ class PromptHistoryRow(Base):
     template_id = Column(String, nullable=True)
     negative_profile_id = Column(String, nullable=True)
     is_favorite = Column(Boolean, nullable=False, default=False)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
 class CharacterProfileRow(Base):
@@ -229,9 +229,9 @@ class CharacterProfileRow(Base):
         StringArray, nullable=False, default=lambda: ["idle", "walk", "attack", "hurt"]
     )
     trigger_token = Column(String, unique=True, nullable=False)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(
-        DateTime,
+        DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
     )
@@ -257,7 +257,7 @@ class ReferenceImageRow(Base):
     angle = Column(ReferenceAngleEnum, nullable=True)
     caption = Column(String, nullable=True)
     rejection_reason = Column(String, nullable=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 
 class LoraJobRow(Base):
@@ -285,9 +285,9 @@ class LoraJobRow(Base):
     )
     output_lora_path = Column(String, nullable=True)
     log_output = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(
-        DateTime,
+        DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
     )

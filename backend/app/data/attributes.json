@@ -271,6 +271,22 @@
           "prompt_terms": ["spellbook", "grimoire", "arcane tome"],
           "compatible_with": ["mage", "necromancer", "alchemist"],
           "tags": ["magic", "knowledge"]
+        },
+        {
+          "id": "empty_handed",
+          "category": "weapons",
+          "label": "Empty Handed",
+          "prompt_terms": ["unarmed", "bare-handed", "fist fighter", "empty hands", "hand-to-hand combat"],
+          "compatible_with": ["monk", "brawler", "rogue", "warrior"],
+          "tags": ["melee", "unarmed", "martial"]
+        },
+        {
+          "id": "gun",
+          "category": "weapons",
+          "label": "Gun",
+          "prompt_terms": ["gun", "pistol", "revolver", "flintlock", "handgun"],
+          "compatible_with": ["gunslinger", "rogue", "warrior"],
+          "tags": ["ranged", "firearm", "mechanical"]
         }
       ]
     },
