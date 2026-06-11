@@ -82,6 +82,7 @@ LoraJobStatusEnum = Enum(
     "running",
     "completed",
     "failed",
+    "cancelled",
     name="lora_job_status",
     create_constraint=True,
 )
@@ -204,6 +205,8 @@ class PromptHistoryRow(Base):
     negative_profile_id = Column(String, nullable=True)
     is_favorite = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    comfyui_prompt_id = Column(String, nullable=True, index=True)
+    comfyui_images = Column(JSONEncodedDict, nullable=True, default=list)
 
 
 class CharacterProfileRow(Base):
@@ -293,6 +296,25 @@ class LoraJobRow(Base):
     )
 
 
+class AuditLogRow(Base):
+    """SQLAlchemy model for the audit_log table.
+
+    Records sensitive operations for security and compliance auditing.
+    """
+
+    __tablename__ = "audit_log"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    timestamp = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    action = Column(String, nullable=False, index=True)
+    resource_type = Column(String, nullable=False)
+    resource_id = Column(String, nullable=True)
+    details = Column(JSONEncodedDict, nullable=True, default=dict)
+    client_ip = Column(String, nullable=True)
+    user_agent = Column(String, nullable=True)
+    request_id = Column(String, nullable=True)
+
+
 # ---------------------------------------------------------------------------
 # Async engine and session factory
 # ---------------------------------------------------------------------------
@@ -310,11 +332,36 @@ async def init_db() -> None:
 
     On PostgreSQL, this also creates ENUM types.
     On SQLite, this enables WAL mode for better concurrent write performance.
+
+    Schema migrations are now managed by Alembic. For existing databases
+    that were created before Alembic was adopted, use:
+        alembic stamp head
+    to mark the current schema as the baseline without running migrations.
+
+    For new databases, this function uses create_all() as a fallback to
+    create all tables, then stamps the Alembic version to head.
     """
     async with engine.begin() as conn:
         if _IS_SQLITE:
             await conn.execute(text("PRAGMA journal_mode=WAL"))
         await conn.run_sync(Base.metadata.create_all)
+
+    # Stamp Alembic to head for new databases (tables already created by create_all)
+    try:
+        from alembic.config import Config as AlembicConfig
+        from alembic import command
+        import os
+
+        alembic_cfg_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "alembic.ini",
+        )
+        if os.path.exists(alembic_cfg_path):
+            alembic_cfg = AlembicConfig(alembic_cfg_path)
+            command.stamp(alembic_cfg, "head")
+    except Exception:
+        # If Alembic stamping fails (e.g., already stamped), that's fine
+        pass
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:

@@ -445,10 +445,10 @@ class TestStartLoRAJob:
     @patch("app.api.lora._monitor_training", new_callable=AsyncMock)
     @patch("app.api.lora.start_training", new_callable=AsyncMock)
     @patch("app.api.lora.prepare_dataset", new_callable=AsyncMock)
-    async def test_start_already_running_job(
+    async def test_start_already_running_job_idempotent(
         self, mock_prepare, mock_start, mock_monitor, client: AsyncClient
     ):
-        """Starting a running job returns 409."""
+        """Starting an already-running job returns the current status (idempotent)."""
         mock_prepare.return_value = Path("/tmp/dataset/test_job")
         mock_start.return_value = None
         mock_monitor.return_value = None
@@ -457,9 +457,15 @@ class TestStartLoRAJob:
         create_resp = await client.post("/api/lora/jobs", json={"character_id": cid})
         job_id = create_resp.json()["job_id"]
 
-        await client.post(f"/api/lora/jobs/{job_id}/start")
+        # First start succeeds
         response = await client.post(f"/api/lora/jobs/{job_id}/start")
-        assert response.status_code == 409
+        assert response.status_code == 200
+        assert response.json()["status"] == "running"
+
+        # Second start is idempotent — returns current status
+        response = await client.post(f"/api/lora/jobs/{job_id}/start")
+        assert response.status_code == 200
+        assert response.json()["status"] == "running"
 
     @pytest.mark.asyncio
     async def test_start_nonexistent_job(self, client: AsyncClient):
@@ -513,7 +519,7 @@ class TestCancelLoRAJob:
     async def test_cancel_running_job(
         self, mock_cancel, mock_prepare, mock_start, mock_monitor, client: AsyncClient
     ):
-        """Cancelling a running job changes status to 'failed'."""
+        """Cancelling a running job changes status to 'cancelled'."""
         mock_prepare.return_value = Path("/tmp/dataset/test_job")
         mock_start.return_value = None
         mock_monitor.return_value = None
@@ -526,11 +532,11 @@ class TestCancelLoRAJob:
         await client.post(f"/api/lora/jobs/{job_id}/start")
         response = await client.post(f"/api/lora/jobs/{job_id}/cancel")
         assert response.status_code == 200
-        assert response.json()["status"] == "failed"
+        assert response.json()["status"] == "cancelled"
 
     @pytest.mark.asyncio
     async def test_cancel_pending_job(self, client: AsyncClient):
-        """Cancelling a pending job returns 409."""
+        """Cancelling a pending job returns 409 (invalid transition)."""
         cid, _ = await _create_character_with_images(client, num_images=15)
         create_resp = await client.post("/api/lora/jobs", json={"character_id": cid})
         job_id = create_resp.json()["job_id"]
@@ -574,7 +580,7 @@ class TestInvalidStatusFilter:
     @pytest.mark.asyncio
     async def test_list_jobs_valid_status_filters(self, client: AsyncClient):
         """All valid status values are accepted."""
-        for status_val in ["pending", "running", "completed", "failed"]:
+        for status_val in ["pending", "running", "completed", "failed", "cancelled"]:
             response = await client.get(f"/api/lora/jobs?status_filter={status_val}")
             assert response.status_code == 200
 
@@ -673,3 +679,482 @@ class TestTrainingBackends:
         data = response.json()
         assert len(data) == 2
         assert data[0]["id"] == "kohya_ss"
+
+
+# ---------------------------------------------------------------------------
+# Atomic State Transition Tests (P0-4)
+# ---------------------------------------------------------------------------
+
+
+class TestLoRAJobStateTransitions:
+    """Tests for atomic LoRA job state transitions (P0-4).
+
+    Validates the state machine:
+        pending  → running     (start)
+        running  → completed   (training succeeds)
+        running  → failed      (training error)
+        running  → cancelled   (user cancel)
+        failed   → pending     (retry)
+        cancelled → pending     (retry)
+
+    Invalid transitions return 409 Conflict.
+    Idempotent transitions (re-applying current state) return 200.
+    """
+
+    @pytest.mark.asyncio
+    async def test_valid_transition_pending_to_running(
+        self, client: AsyncClient
+    ):
+        """pending → running is a valid transition."""
+        from app.core.lora_state import validate_transition
+        result = validate_transition("pending", "running")
+        assert result == "allowed"
+
+    @pytest.mark.asyncio
+    async def test_valid_transition_running_to_completed(
+        self, client: AsyncClient
+    ):
+        """running → completed is a valid transition."""
+        from app.core.lora_state import validate_transition
+        result = validate_transition("running", "completed")
+        assert result == "allowed"
+
+    @pytest.mark.asyncio
+    async def test_valid_transition_running_to_failed(
+        self, client: AsyncClient
+    ):
+        """running → failed is a valid transition."""
+        from app.core.lora_state import validate_transition
+        result = validate_transition("running", "failed")
+        assert result == "allowed"
+
+    @pytest.mark.asyncio
+    async def test_valid_transition_running_to_cancelled(
+        self, client: AsyncClient
+    ):
+        """running → cancelled is a valid transition."""
+        from app.core.lora_state import validate_transition
+        result = validate_transition("running", "cancelled")
+        assert result == "allowed"
+
+    @pytest.mark.asyncio
+    async def test_valid_transition_failed_to_pending(
+        self, client: AsyncClient
+    ):
+        """failed → pending is a valid transition (retry)."""
+        from app.core.lora_state import validate_transition
+        result = validate_transition("failed", "pending")
+        assert result == "allowed"
+
+    @pytest.mark.asyncio
+    async def test_valid_transition_cancelled_to_pending(
+        self, client: AsyncClient
+    ):
+        """cancelled → pending is a valid transition (retry)."""
+        from app.core.lora_state import validate_transition
+        result = validate_transition("cancelled", "pending")
+        assert result == "allowed"
+
+    @pytest.mark.asyncio
+    async def test_invalid_transition_pending_to_completed(
+        self, client: AsyncClient
+    ):
+        """pending → completed is invalid."""
+        from app.core.lora_state import InvalidStateTransition, validate_transition
+        with pytest.raises(InvalidStateTransition):
+            validate_transition("pending", "completed")
+
+    @pytest.mark.asyncio
+    async def test_invalid_transition_pending_to_failed(
+        self, client: AsyncClient
+    ):
+        """pending → failed is invalid."""
+        from app.core.lora_state import InvalidStateTransition, validate_transition
+        with pytest.raises(InvalidStateTransition):
+            validate_transition("pending", "failed")
+
+    @pytest.mark.asyncio
+    async def test_invalid_transition_completed_to_running(
+        self, client: AsyncClient
+    ):
+        """completed → running is invalid."""
+        from app.core.lora_state import InvalidStateTransition, validate_transition
+        with pytest.raises(InvalidStateTransition):
+            validate_transition("completed", "running")
+
+    @pytest.mark.asyncio
+    async def test_invalid_transition_completed_to_cancelled(
+        self, client: AsyncClient
+    ):
+        """completed → cancelled is invalid."""
+        from app.core.lora_state import InvalidStateTransition, validate_transition
+        with pytest.raises(InvalidStateTransition):
+            validate_transition("completed", "cancelled")
+
+    @pytest.mark.asyncio
+    async def test_idempotent_transition_running_to_running(
+        self, client: AsyncClient
+    ):
+        """running → running is idempotent."""
+        from app.core.lora_state import validate_transition
+        result = validate_transition("running", "running")
+        assert result == "idempotent"
+
+    @pytest.mark.asyncio
+    async def test_idempotent_transition_completed_to_completed(
+        self, client: AsyncClient
+    ):
+        """completed → completed is idempotent."""
+        from app.core.lora_state import validate_transition
+        result = validate_transition("completed", "completed")
+        assert result == "idempotent"
+
+    @pytest.mark.asyncio
+    async def test_idempotent_transition_failed_to_failed(
+        self, client: AsyncClient
+    ):
+        """failed → failed is idempotent."""
+        from app.core.lora_state import validate_transition
+        result = validate_transition("failed", "failed")
+        assert result == "idempotent"
+
+    @pytest.mark.asyncio
+    async def test_idempotent_transition_cancelled_to_cancelled(
+        self, client: AsyncClient
+    ):
+        """cancelled → cancelled is idempotent."""
+        from app.core.lora_state import validate_transition
+        result = validate_transition("cancelled", "cancelled")
+        assert result == "idempotent"
+
+    @pytest.mark.asyncio
+    async def test_idempotent_transition_pending_to_pending(
+        self, client: AsyncClient
+    ):
+        """pending → pending is idempotent."""
+        from app.core.lora_state import validate_transition
+        result = validate_transition("pending", "pending")
+        assert result == "idempotent"
+
+    @pytest.mark.asyncio
+    @patch("app.api.lora._monitor_training", new_callable=AsyncMock)
+    @patch("app.api.lora.start_training", new_callable=AsyncMock)
+    @patch("app.api.lora.prepare_dataset", new_callable=AsyncMock)
+    async def test_start_completed_job_returns_409(
+        self, mock_prepare, mock_start, mock_monitor, client: AsyncClient
+    ):
+        """Starting a completed job returns 409 Conflict."""
+        mock_prepare.return_value = Path("/tmp/dataset/test_job")
+        mock_start.return_value = None
+        mock_monitor.return_value = None
+
+        cid, _ = await _create_character_with_images(client, num_images=15)
+        create_resp = await client.post("/api/lora/jobs", json={"character_id": cid})
+        job_id = create_resp.json()["job_id"]
+
+        # Start the job
+        await client.post(f"/api/lora/jobs/{job_id}/start")
+
+        # Manually set status to completed via DB
+        from sqlalchemy import update
+        from app.db.database import LoraJobRow
+        async with _test_session_factory() as session:
+            await session.execute(
+                update(LoraJobRow)
+                .where(LoraJobRow.job_id == job_id)
+                .values(status="completed")
+            )
+            await session.commit()
+
+        # Try to start again — should get 409
+        response = await client.post(f"/api/lora/jobs/{job_id}/start")
+        assert response.status_code == 409
+
+    @pytest.mark.asyncio
+    @patch("app.api.lora.cancel_training", new_callable=AsyncMock)
+    async def test_cancel_completed_job_returns_409(
+        self, mock_cancel, client: AsyncClient
+    ):
+        """Cancelling a completed job returns 409 Conflict."""
+        mock_cancel.return_value = False
+
+        cid, _ = await _create_character_with_images(client, num_images=15)
+        create_resp = await client.post("/api/lora/jobs", json={"character_id": cid})
+        job_id = create_resp.json()["job_id"]
+
+        # Manually set status to completed via DB
+        from sqlalchemy import update
+        from app.db.database import LoraJobRow
+        async with _test_session_factory() as session:
+            await session.execute(
+                update(LoraJobRow)
+                .where(LoraJobRow.job_id == job_id)
+                .values(status="completed")
+            )
+            await session.commit()
+
+        # Try to cancel — should get 409
+        response = await client.post(f"/api/lora/jobs/{job_id}/cancel")
+        assert response.status_code == 409
+
+    @pytest.mark.asyncio
+    @patch("app.api.lora._monitor_training", new_callable=AsyncMock)
+    @patch("app.api.lora.start_training", new_callable=AsyncMock)
+    @patch("app.api.lora.prepare_dataset", new_callable=AsyncMock)
+    @patch("app.api.lora.cancel_training", new_callable=AsyncMock)
+    async def test_cancel_then_start_returns_409(
+        self, mock_cancel, mock_prepare, mock_start, mock_monitor, client: AsyncClient
+    ):
+        """Starting a cancelled job returns 409 (must retry to pending first)."""
+        mock_prepare.return_value = Path("/tmp/dataset/test_job")
+        mock_start.return_value = None
+        mock_monitor.return_value = None
+        mock_cancel.return_value = True
+
+        cid, _ = await _create_character_with_images(client, num_images=15)
+        create_resp = await client.post("/api/lora/jobs", json={"character_id": cid})
+        job_id = create_resp.json()["job_id"]
+
+        # Start and then cancel
+        await client.post(f"/api/lora/jobs/{job_id}/start")
+        cancel_resp = await client.post(f"/api/lora/jobs/{job_id}/cancel")
+        assert cancel_resp.status_code == 200
+        assert cancel_resp.json()["status"] == "cancelled"
+
+        # Try to start again — should get 409 (cancelled → running is invalid)
+        response = await client.post(f"/api/lora/jobs/{job_id}/start")
+        assert response.status_code == 409
+
+    @pytest.mark.asyncio
+    async def test_cancelled_status_in_list_filter(self, client: AsyncClient):
+        """'cancelled' is a valid status filter value."""
+        response = await client.get("/api/lora/jobs?status_filter=cancelled")
+        assert response.status_code == 200
+
+    @pytest.mark.asyncio
+    @patch("app.api.lora._monitor_training", new_callable=AsyncMock)
+    @patch("app.api.lora.start_training", new_callable=AsyncMock)
+    @patch("app.api.lora.prepare_dataset", new_callable=AsyncMock)
+    async def test_double_start_is_idempotent(
+        self, mock_prepare, mock_start, mock_monitor, client: AsyncClient
+    ):
+        """Starting an already-running job is idempotent (returns 200)."""
+        mock_prepare.return_value = Path("/tmp/dataset/test_job")
+        mock_start.return_value = None
+        mock_monitor.return_value = None
+
+        cid, _ = await _create_character_with_images(client, num_images=15)
+        create_resp = await client.post("/api/lora/jobs", json={"character_id": cid})
+        job_id = create_resp.json()["job_id"]
+
+        # First start succeeds
+        response1 = await client.post(f"/api/lora/jobs/{job_id}/start")
+        assert response1.status_code == 200
+        assert response1.json()["status"] == "running"
+
+        # Second start is idempotent
+        response2 = await client.post(f"/api/lora/jobs/{job_id}/start")
+        assert response2.status_code == 200
+        assert response2.json()["status"] == "running"
+
+    @pytest.mark.asyncio
+    @patch("app.api.lora.cancel_training", new_callable=AsyncMock)
+    async def test_double_cancel_is_idempotent(
+        self, mock_cancel, client: AsyncClient
+    ):
+        """Cancelling an already-cancelled job is idempotent (returns 200)."""
+        mock_cancel.return_value = False
+
+        cid, _ = await _create_character_with_images(client, num_images=15)
+        create_resp = await client.post("/api/lora/jobs", json={"character_id": cid})
+        job_id = create_resp.json()["job_id"]
+
+        # Manually set status to cancelled via DB
+        from sqlalchemy import update
+        from app.db.database import LoraJobRow
+        async with _test_session_factory() as session:
+            await session.execute(
+                update(LoraJobRow)
+                .where(LoraJobRow.job_id == job_id)
+                .values(status="cancelled")
+            )
+            await session.commit()
+
+        # Cancel is idempotent
+        response = await client.post(f"/api/lora/jobs/{job_id}/cancel")
+        assert response.status_code == 200
+        assert response.json()["status"] == "cancelled"
+
+
+class TestLoRAJobStateTransitionModule:
+    """Unit tests for the lora_state module."""
+
+    def test_all_allowed_transitions(self):
+        """Verify all allowed transitions are recognized."""
+        from app.core.lora_state import validate_transition
+        allowed = [
+            ("pending", "running"),
+            ("running", "completed"),
+            ("running", "failed"),
+            ("running", "cancelled"),
+            ("failed", "pending"),
+            ("cancelled", "pending"),
+        ]
+        for from_status, to_status in allowed:
+            assert validate_transition(from_status, to_status) == "allowed"
+
+    def test_all_idempotent_transitions(self):
+        """Verify all idempotent transitions are recognized."""
+        from app.core.lora_state import validate_transition
+        for status in ["pending", "running", "completed", "failed", "cancelled"]:
+            assert validate_transition(status, status) == "idempotent"
+
+    def test_invalid_transitions_raise(self):
+        """Verify invalid transitions raise InvalidStateTransition."""
+        from app.core.lora_state import InvalidStateTransition, validate_transition
+        invalid = [
+            ("pending", "completed"),
+            ("pending", "failed"),
+            ("pending", "cancelled"),
+            ("completed", "running"),
+            ("completed", "failed"),
+            ("completed", "cancelled"),
+            ("failed", "running"),
+            ("failed", "completed"),
+            ("failed", "cancelled"),
+            ("cancelled", "running"),
+            ("cancelled", "completed"),
+            ("cancelled", "failed"),
+        ]
+        for from_status, to_status in invalid:
+            with pytest.raises(InvalidStateTransition):
+                validate_transition(from_status, to_status)
+
+    def test_invalid_transition_exception_fields(self):
+        """InvalidStateTransition exception contains useful fields."""
+        from app.core.lora_state import InvalidStateTransition, validate_transition
+        with pytest.raises(InvalidStateTransition) as exc_info:
+            validate_transition("completed", "running")
+        exc = exc_info.value
+        assert exc.current_status == "completed"
+        assert exc.target_status == "running"
+
+    def test_transitions_from_helper(self):
+        """_transitions_from returns valid targets for each status."""
+        from app.core.lora_state import _transitions_from
+        assert "running" in _transitions_from("pending")
+        assert "completed" in _transitions_from("running")
+        assert "failed" in _transitions_from("running")
+        assert "cancelled" in _transitions_from("running")
+        assert "pending" in _transitions_from("failed")
+        assert "pending" in _transitions_from("cancelled")
+
+
+class TestDeleteLoRAJob:
+    """Tests for DELETE /api/lora/jobs/{job_id}."""
+
+    @pytest.mark.asyncio
+    async def test_delete_completed_job(self, client: AsyncClient):
+        """Deleting a completed job removes it from the database."""
+        cid, _ = await _create_character_with_images(client, num_images=15)
+        create_resp = await client.post("/api/lora/jobs", json={"character_id": cid})
+        job_id = create_resp.json()["job_id"]
+
+        # Transition to completed via direct DB update
+        from app.db.database import LoraJobRow
+        from sqlalchemy import update
+        async with _test_session_factory() as session:
+            await session.execute(
+                update(LoraJobRow).where(LoraJobRow.job_id == job_id).values(status="completed")
+            )
+            await session.commit()
+
+        response = await client.delete(f"/api/lora/jobs/{job_id}")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["job_id"] == job_id
+        assert data["character_id"] == cid
+        assert isinstance(data["deleted_files"], list)
+
+        # Verify job is gone
+        get_resp = await client.get(f"/api/lora/jobs/{job_id}")
+        assert get_resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_delete_failed_job(self, client: AsyncClient):
+        """Deleting a failed job removes it from the database."""
+        cid, _ = await _create_character_with_images(client, num_images=15)
+        create_resp = await client.post("/api/lora/jobs", json={"character_id": cid})
+        job_id = create_resp.json()["job_id"]
+
+        from app.db.database import LoraJobRow
+        from sqlalchemy import update
+        async with _test_session_factory() as session:
+            await session.execute(
+                update(LoraJobRow).where(LoraJobRow.job_id == job_id).values(status="failed")
+            )
+            await session.commit()
+
+        response = await client.delete(f"/api/lora/jobs/{job_id}")
+        assert response.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_delete_pending_job_rejected(self, client: AsyncClient):
+        """Deleting a pending job returns 409 (must cancel first)."""
+        cid, _ = await _create_character_with_images(client, num_images=15)
+        create_resp = await client.post("/api/lora/jobs", json={"character_id": cid})
+        job_id = create_resp.json()["job_id"]
+
+        response = await client.delete(f"/api/lora/jobs/{job_id}")
+        assert response.status_code == 409
+        assert "pending" in response.json()["detail"].lower()
+
+    @pytest.mark.asyncio
+    async def test_delete_nonexistent_job(self, client: AsyncClient):
+        """Deleting a nonexistent job returns 404."""
+        response = await client.delete("/api/lora/jobs/nonexistent")
+        assert response.status_code == 404
+
+
+class TestDownloadLoRAFile:
+    """Tests for GET /api/lora/jobs/{job_id}/download."""
+
+    @pytest.mark.asyncio
+    async def test_download_pending_job_rejected(self, client: AsyncClient):
+        """Downloading a pending job returns 409."""
+        cid, _ = await _create_character_with_images(client, num_images=15)
+        create_resp = await client.post("/api/lora/jobs", json={"character_id": cid})
+        job_id = create_resp.json()["job_id"]
+
+        response = await client.get(f"/api/lora/jobs/{job_id}/download")
+        assert response.status_code == 409
+
+    @pytest.mark.asyncio
+    async def test_download_nonexistent_job(self, client: AsyncClient):
+        """Downloading a nonexistent job returns 404."""
+        response = await client.get("/api/lora/jobs/nonexistent/download")
+        assert response.status_code == 404
+
+
+class TestLoRAVersions:
+    """Tests for GET /api/lora/jobs/{job_id}/versions."""
+
+    @pytest.mark.asyncio
+    async def test_versions_empty(self, client: AsyncClient):
+        """Versions endpoint returns empty list when no versioned files exist."""
+        cid, _ = await _create_character_with_images(client, num_images=15)
+        create_resp = await client.post("/api/lora/jobs", json={"character_id": cid})
+        job_id = create_resp.json()["job_id"]
+
+        response = await client.get(f"/api/lora/jobs/{job_id}/versions")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["job_id"] == job_id
+        assert data["versions"] == []
+        assert data["total"] == 0
+
+    @pytest.mark.asyncio
+    async def test_versions_nonexistent_job(self, client: AsyncClient):
+        """Versions endpoint returns 404 for nonexistent job."""
+        response = await client.get("/api/lora/jobs/nonexistent/versions")
+        assert response.status_code == 404

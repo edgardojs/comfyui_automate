@@ -287,6 +287,33 @@ function PromptHistory({ onCopy, showToast }) {
                     </div>
                   </div>
 
+                  {/* ComfyUI generated images */}
+                  {item.comfyui_images && item.comfyui_images.length > 0 && (
+                    <div>
+                      <label className="mb-1 block text-xs font-medium text-emerald-400 uppercase tracking-wider">
+                        Generated Images
+                      </label>
+                      <div className="grid grid-cols-2 gap-2 mt-1">
+                        {item.comfyui_images.map((img, imgIdx) => (
+                          <a
+                            key={imgIdx}
+                            href={img.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="block overflow-hidden rounded-md border border-gray-600 hover:border-indigo-500 transition-colors"
+                          >
+                            <img
+                              src={img.url}
+                              alt={`Generated image ${imgIdx + 1}`}
+                              className="w-full h-auto"
+                              loading="lazy"
+                            />
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   {/* Generation ID */}
                   <div className="text-[10px] text-gray-600 font-mono">
                     ID: {item.generation_id}

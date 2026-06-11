@@ -20,6 +20,9 @@ vi.mock('../api/client', () => ({
   fetchPreviewImages: vi.fn(),
   exportLoRA: vi.fn(),
   fetchWorkflowTemplate: vi.fn(),
+  getLoRADownloadUrl: vi.fn(),
+  fetchLoRAVersions: vi.fn(),
+  deleteLoRAJob: vi.fn(),
 }))
 
 import {
@@ -27,6 +30,9 @@ import {
   fetchPreviewImages,
   exportLoRA,
   fetchWorkflowTemplate,
+  getLoRADownloadUrl,
+  fetchLoRAVersions,
+  deleteLoRAJob,
 } from '../api/client'
 
 const MOCK_METADATA = {
@@ -72,6 +78,9 @@ beforeEach(() => {
   fetchPreviewImages.mockResolvedValue(MOCK_PREVIEWS)
   exportLoRA.mockResolvedValue({ job_id: 'lora_abc123', export_path: '/path/to/lora.safetensors', exported: true })
   fetchWorkflowTemplate.mockResolvedValue(MOCK_WORKFLOW)
+  getLoRADownloadUrl.mockReturnValue('/api/lora/jobs/lora_abc123/download')
+  fetchLoRAVersions.mockResolvedValue({ job_id: 'lora_abc123', character_id: 'char_xyz789', versions: [], total: 0 })
+  deleteLoRAJob.mockResolvedValue({ job_id: 'lora_abc123', character_id: 'char_xyz789', deleted_files: [] })
 })
 
 describe('LoraDetail', () => {
@@ -169,4 +178,95 @@ describe('LoraDetail', () => {
       expect(screen.getByText('stable-diffusion-xl-base-1.0.safetensors')).toBeInTheDocument()
     })
   })
-})
+
+  it('shows download LoRA section', async () => {
+    render(<LoraDetail jobId="lora_abc123" characterId="char_xyz789" showToast={mockToast} />)
+
+    await waitFor(() => {
+      expect(screen.getByText(/download lora/i)).toBeInTheDocument()
+    })
+
+    // The download link should have the correct href
+    const downloadLink = screen.getByText(/download \.safetensors/i).closest('a')
+    expect(downloadLink).toHaveAttribute('href', '/api/lora/jobs/lora_abc123/download')
+    expect(downloadLink).toHaveAttribute('download')
+  })
+
+  it('shows version history section', async () => {
+    render(<LoraDetail jobId="lora_abc123" characterId="char_xyz789" showToast={mockToast} />)
+
+    await waitFor(() => {
+      expect(screen.getByText(/version history/i)).toBeInTheDocument()
+    })
+
+    // Initially shows "no versioned files" message
+    expect(screen.getByText(/no versioned lora files found/i)).toBeInTheDocument()
+  })
+
+  it('shows version history with versions', async () => {
+    fetchLoRAVersions.mockResolvedValue({
+      job_id: 'lora_abc123',
+      character_id: 'char_xyz789',
+      versions: [
+        { version: 1, filename: 'DungeonRPG_Hero_Pixel32_v1.safetensors', size: 144179200, created_at: '2026-05-16T10:00:00Z', metadata: null },
+        { version: 2, filename: 'DungeonRPG_Hero_Pixel32_v2.safetensors', size: 144179200, created_at: '2026-05-17T10:00:00Z', metadata: null },
+      ],
+      total: 2,
+    })
+
+    render(<LoraDetail jobId="lora_abc123" characterId="char_xyz789" showToast={mockToast} />)
+
+    const user = userEvent.setup()
+    await waitFor(() => {
+      expect(screen.getByText(/version history/i)).toBeInTheDocument()
+    })
+
+    // Click Refresh to load versions
+    await user.click(screen.getByText('Refresh'))
+
+    await waitFor(() => {
+      expect(screen.getByText(/DungeonRPG_Hero_Pixel32_v1\.safetensors/)).toBeInTheDocument()
+      expect(screen.getByText(/DungeonRPG_Hero_Pixel32_v2\.safetensors/)).toBeInTheDocument()
+    })
+  })
+
+  it('shows delete section with danger zone', async () => {
+    render(<LoraDetail jobId="lora_abc123" characterId="char_xyz789" showToast={mockToast} />)
+
+    await waitFor(() => {
+      expect(screen.getByText(/danger zone/i)).toBeInTheDocument()
+    })
+
+    expect(screen.getByText(/delete lora job/i)).toBeInTheDocument()
+  })
+
+  it('shows delete confirmation when delete button clicked', async () => {
+    render(<LoraDetail jobId="lora_abc123" characterId="char_xyz789" showToast={mockToast} />)
+
+    await waitFor(() => {
+      expect(screen.getByText(/danger zone/i)).toBeInTheDocument()
+    })
+
+    const user = userEvent.setup()
+    await user.click(screen.getByText(/delete lora job/i))
+
+    expect(screen.getByText(/this will permanently delete/i)).toBeInTheDocument()
+    expect(screen.getByText(/confirm delete/i)).toBeInTheDocument()
+    expect(screen.getByText('Cancel')).toBeInTheDocument()
+  })
+
+  it('calls onDelete callback after successful deletion', async () => {
+    const mockOnDelete = vi.fn()
+    render(<LoraDetail jobId="lora_abc123" characterId="char_xyz789" showToast={mockToast} onDelete={mockOnDelete} />)
+
+    await waitFor(() => {
+      expect(screen.getByText(/danger zone/i)).toBeInTheDocument()
+    })
+
+    const user = userEvent.setup()
+    await user.click(screen.getByText(/delete lora job/i))
+    await user.click(screen.getByText(/confirm delete/i))
+
+    expect(deleteLoRAJob).toHaveBeenCalledWith('lora_abc123')
+    expect(mockOnDelete).toHaveBeenCalledWith('lora_abc123')
+  })

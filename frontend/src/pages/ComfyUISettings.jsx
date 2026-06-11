@@ -23,8 +23,8 @@ function ComfyUISettings({ onSettingsChange }) {
   const [saveMessage, setSaveMessage] = useState('')
   const [fileError, setFileError] = useState('')
 
-  // Debounced auto-save: only persist to localStorage after 500ms of inactivity
-  const saveTimerRef = useRef(null)
+  // Immediate save: persist to localStorage on every change.
+  // Previously used a 500ms debounce which could lose settings on page close.
   // Track save message timer to clear on unmount
   const saveMsgTimerRef = useRef(null)
   useEffect(() => {
@@ -33,15 +33,11 @@ function ComfyUISettings({ onSettingsChange }) {
     }
   }, [])
   useEffect(() => {
-    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
-    saveTimerRef.current = setTimeout(() => {
-      saveComfyUISettings(settings)
-      // Sync settings up to App-level state
-      if (onSettingsChange) onSettingsChange(settings)
-    }, 500)
-    return () => {
-      if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
-    }
+    // Save immediately on every settings change — no debounce.
+    // localStorage.setItem is synchronous and sub-millisecond for small objects.
+    saveComfyUISettings(settings)
+    // Sync settings up to App-level state
+    if (onSettingsChange) onSettingsChange(settings)
   }, [settings, onSettingsChange])
 
   const handleChange = useCallback((field, value) => {
@@ -354,13 +350,13 @@ function ComfyUISettings({ onSettingsChange }) {
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-500 mb-1">
-              Seed Input Name
+              Seed Input Name <span className="text-gray-600">(auto-detected if empty)</span>
             </label>
             <input
               type="text"
               value={settings.seedInputName}
               onChange={(e) => handleChange('seedInputName', e.target.value)}
-              placeholder="seed"
+              placeholder="e.g. noise_seed or seed"
               className="w-full rounded-md border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-200 placeholder-gray-600 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
             />
           </div>

@@ -6,6 +6,7 @@ import {
   createLoRAJob,
   fetchLoRAJobs,
 } from '../api/client'
+import LoraDetail from './LoraDetail'
 
 /**
  * TrainingConfig — LoRA training configuration and job creation UI.
@@ -58,6 +59,7 @@ function TrainingConfig({ characterId, showToast }) {
   const [jobs, setJobs] = useState([])
   const [creating, setCreating] = useState(false)
   const [showAllJobs, setShowAllJobs] = useState(false)
+  const [selectedJobId, setSelectedJobId] = useState(null)
 
   // Load presets
   useEffect(() => {
@@ -422,7 +424,13 @@ function TrainingConfig({ characterId, showToast }) {
             {(showAllJobs ? jobs : jobs.slice(0, 5)).map(job => (
               <div
                 key={job.job_id}
-                className="flex items-center justify-between bg-gray-800 border border-gray-700 rounded-lg px-3 py-2"
+                className={`flex items-center justify-between bg-gray-800 border rounded-lg px-3 py-2 ${
+                  selectedJobId === job.job_id ? 'border-emerald-500' : 'border-gray-700'
+                } ${job.status === 'completed' ? 'cursor-pointer hover:border-gray-500' : ''}`}
+                onClick={() => job.status === 'completed' && setSelectedJobId(
+                  selectedJobId === job.job_id ? null : job.job_id
+                )}
+                title={job.status === 'completed' ? 'Click to view LoRA details' : undefined}
               >
                 <div className="flex items-center gap-2">
                   <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${
@@ -437,7 +445,12 @@ function TrainingConfig({ characterId, showToast }) {
                     LR: {job.learning_rate} · {job.epochs} epochs
                   </span>
                 </div>
-                <span className="text-[10px] text-gray-500 font-mono">{job.job_id}</span>
+                <div className="flex items-center gap-2">
+                  {job.status === 'completed' && (
+                    <span className="text-[10px] text-emerald-400">▸ Details</span>
+                  )}
+                  <span className="text-[10px] text-gray-500 font-mono">{job.job_id}</span>
+                </div>
               </div>
             ))}
           </div>
@@ -453,6 +466,34 @@ function TrainingConfig({ characterId, showToast }) {
           )}
         </div>
       )}
+
+      {/* LoRA Detail View for selected completed job */}
+      {selectedJobId && (() => {
+        const selectedJob = jobs.find(j => j.job_id === selectedJobId)
+        if (!selectedJob) return null
+        return (
+          <div className="mt-4 pt-3 border-t border-gray-700">
+            <div className="flex items-center justify-between mb-2">
+              <h5 className="text-xs font-semibold text-white">LoRA Details</h5>
+              <button
+                onClick={() => setSelectedJobId(null)}
+                className="text-xs text-gray-400 hover:text-white transition-colors cursor-pointer"
+              >
+                ✕ Close
+              </button>
+            </div>
+            <LoraDetail
+              jobId={selectedJobId}
+              characterId={characterId}
+              showToast={showToast}
+              onDelete={(deletedJobId) => {
+                setSelectedJobId(null)
+                loadJobs()
+              }}
+            />
+          </div>
+        )
+      })()}
     </div>
   )
 }

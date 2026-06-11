@@ -8,12 +8,13 @@ curated by the user to build a training dataset for LoRA fine-tuning.
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import storage as storage_mod
+from app.core.rate_limiter import check_rate_limit, upload_limiter
 from app.core.storage import (
     ALLOWED_IMAGE_EXTENSIONS,
     MAX_FILE_SIZE,
@@ -22,6 +23,20 @@ from app.core.storage import (
     get_references_dir,
     save_reference_image,
     validate_image_content,
+)
+from app.core.storage_quota import (
+    check_project_quota,
+    check_character_image_limit,
+    MAX_IMAGES_PER_CHARACTER,
+)
+from app.core.audit import (
+    log_audit_event,
+    extract_client_ip,
+    extract_user_agent,
+    REFERENCE_UPLOAD,
+    REFERENCE_DELETE,
+    REFERENCE_CLEANUP,
+    RESOURCE_REFERENCE_IMAGE,
 )
 from app.core.dataset_validator import DatasetValidationResult, validate_dataset
 from app.db.database import CharacterProfileRow, ReferenceImageRow, get_session
@@ -91,9 +106,16 @@ async def _get_character_or_404(
 async def upload_references(
     character_id: str,
     files: list[UploadFile],
+    fastapi_request: Request,
     session: AsyncSession = Depends(get_session),
 ) -> list[ReferenceImage]:
     """Upload reference images for a character profile."""
+    # Rate limit: 20 uploads per minute per IP
+    client_ip = fastapi_request.headers.get("x-forwarded-for", fastapi_request.client.host if fastapi_request.client else "unknown").split(",")[0].strip()
+    rate_limit_response = check_rate_limit(upload_limiter, client_ip)
+    if rate_limit_response:
+        return rate_limit_response
+
     character = await _get_character_or_404(character_id, session)
 
     if not files:
@@ -106,6 +128,37 @@ async def upload_references(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Too many files. Maximum {MAX_UPLOAD_FILES} files per upload, got {len(files)}.",
+        )
+
+    # Check per-character image limit
+    current_image_count = await session.execute(
+        select(ReferenceImageRow).where(
+            ReferenceImageRow.character_id == character_id
+        )
+    )
+    current_images = list(current_image_count.scalars().all())
+    within_limit, limit_reason = check_character_image_limit(
+        character_name=character.character_name,  # type: ignore[arg-type]
+        project_name=character.project_name,  # type: ignore[arg-type]
+        current_count=len(current_images),
+        additional=len(files),
+    )
+    if not within_limit:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=limit_reason,
+        )
+
+    # Check per-project storage quota (estimate based on MAX_FILE_SIZE per file)
+    estimated_bytes = len(files) * MAX_FILE_SIZE
+    within_quota, quota_reason = check_project_quota(
+        project_name=character.project_name,  # type: ignore[arg-type]
+        additional_bytes=estimated_bytes,
+    )
+    if not within_quota:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=quota_reason,
         )
 
     created: list[ReferenceImage] = []
@@ -189,6 +242,26 @@ async def upload_references(
             (Path(storage_mod.SPRITE_PROJECTS_DIR) / p).unlink(missing_ok=True)
         await session.rollback()
         raise
+
+    # Audit log: reference image upload
+    client_ip = extract_client_ip(fastapi_request)
+    user_agent = extract_user_agent(fastapi_request)
+    for row in created:
+        await log_audit_event(
+            session=session,
+            action=REFERENCE_UPLOAD,
+            resource_type=RESOURCE_REFERENCE_IMAGE,
+            resource_id=row.image_id,
+            details={
+                "character_id": character_id,
+                "original_filename": row.original_filename,
+                "file_path": row.file_path,
+                "project_name": character.project_name,
+            },
+            client_ip=client_ip,
+            user_agent=user_agent,
+        )
+    await session.commit()
 
     # Refresh all created rows to get DB-populated defaults
     for row in created:
@@ -309,6 +382,7 @@ async def update_reference(
 async def delete_reference(
     character_id: str,
     image_id: str,
+    fastapi_request: Request,
     session: AsyncSession = Depends(get_session),
 ) -> None:
     """Delete a reference image and its file from disk."""
@@ -327,6 +401,23 @@ async def delete_reference(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Reference image '{image_id}' not found for character '{character_id}'",
         )
+
+    # Audit log: reference image delete
+    client_ip = extract_client_ip(fastapi_request)
+    user_agent = extract_user_agent(fastapi_request)
+    await log_audit_event(
+        session=session,
+        action=REFERENCE_DELETE,
+        resource_type=RESOURCE_REFERENCE_IMAGE,
+        resource_id=image_id,
+        details={
+            "character_id": character_id,
+            "original_filename": row.original_filename,
+            "file_path": row.file_path,
+        },
+        client_ip=client_ip,
+        user_agent=user_agent,
+    )
 
     # Delete file from disk
     delete_reference_image(row.file_path)  # type: ignore[arg-type]
@@ -402,3 +493,91 @@ async def get_reference_file(
         media_type=media_type,
         filename=row.original_filename,  # type: ignore[arg-type]
     )
+
+
+# ---------------------------------------------------------------------------
+# DELETE /api/characters/{character_id}/references/cleanup — Cleanup rejected images
+# ---------------------------------------------------------------------------
+
+
+@router.delete(
+    "/cleanup",
+    summary="Cleanup rejected reference images",
+    description=(
+        "Remove all rejected reference images for a character, deleting "
+        "both the database records and the files from disk. This helps "
+        "reclaim storage space by removing images that were rejected "
+        "during curation."
+    ),
+    responses={404: {"description": "Character not found"}},
+)
+async def cleanup_rejected_references(
+    character_id: str,
+    fastapi_request: Request,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Remove all rejected reference images for a character."""
+    character = await _get_character_or_404(character_id, session)
+
+    # Find all rejected images for this character
+    result = await session.execute(
+        select(ReferenceImageRow).where(
+            ReferenceImageRow.character_id == character_id,
+            ReferenceImageRow.status == ReferenceStatus.REJECTED.value,
+        )
+    )
+    rejected_rows = result.scalars().all()
+
+    removed_count = 0
+    removed_bytes = 0
+    errors: list[str] = []
+
+    # Audit log: cleanup operation
+    client_ip = extract_client_ip(fastapi_request)
+    user_agent = extract_user_agent(fastapi_request)
+    await log_audit_event(
+        session=session,
+        action=REFERENCE_CLEANUP,
+        resource_type=RESOURCE_REFERENCE_IMAGE,
+        resource_id=character_id,
+        details={
+            "character_id": character_id,
+            "rejected_count": len(rejected_rows),
+            "project_name": character.project_name,
+        },
+        client_ip=client_ip,
+        user_agent=user_agent,
+    )
+
+    for row in rejected_rows:
+        try:
+            # Delete file from disk
+            file_path = Path(storage_mod.SPRITE_PROJECTS_DIR) / row.file_path  # type: ignore[arg-type]
+            if file_path.exists():
+                file_size = file_path.stat().st_size
+                file_path.unlink()
+                removed_bytes += file_size
+            # Delete database record
+            await session.delete(row)
+            removed_count += 1
+        except Exception as e:
+            errors.append(f"Failed to delete image {row.image_id}: {str(e)}")
+
+    try:
+        await session.commit()
+    except Exception as e:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to commit cleanup changes: {str(e)}",
+        )
+
+    return {
+        "character_id": character_id,
+        "character_name": character.character_name,  # type: ignore[arg-type]
+        "project_name": character.project_name,  # type: ignore[arg-type]
+        "removed_count": removed_count,
+        "removed_bytes": removed_bytes,
+        "removed_mb": round(removed_bytes / (1024 * 1024), 2) if removed_bytes > 0 else 0,
+        "errors": errors,
+    }

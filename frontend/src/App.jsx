@@ -7,8 +7,8 @@ import PromptHistory from './components/PromptHistory'
 import ComfyUISettings from './pages/ComfyUISettings'
 import CharactersPage from './pages/CharactersPage'
 import ErrorBoundary from './components/ErrorBoundary'
-import { generatePrompts, submitToComfyUI, fetchComfyUIHistory, buildComfyUIImageUrl, fetchComfyUIClientId } from './api/client'
-import { loadComfyUISettings } from './api/comfyuiSettings'
+import { generatePrompts, submitToComfyUI, fetchComfyUIHistory, buildComfyUIImageUrl, fetchComfyUIClientId, saveComfyUIImages, fetchHistory } from './api/client'
+import { loadComfyUISettings, flushComfyUISettings } from './api/comfyuiSettings'
 import { ComfyUIWebSocket } from './api/comfyuiWs'
 import PoseBatchGenerator from './components/PoseBatchGenerator'
 
@@ -57,12 +57,83 @@ function App() {
   // --- ComfyUI generation progress state ---
   const [comfyUIProgress, setComfyUIProgress] = useState(null)
   // { promptId, status: 'connecting'|'connected'|'generating'|'done'|'error', step, maxStep, images, errorMessage, nodeId }
+
+  // --- ComfyUI persistent images state ---
+  // Stores generated images keyed by history_id so they survive across re-renders,
+  // state resets, and page refreshes. Value is array of { filename, subfolder, type, url }.
+  // Also persisted to localStorage so images survive page refreshes.
+  const [comfyUIImages, setComfyUIImages] = useState(() => {
+    try {
+      const stored = localStorage.getItem('comfyui_images')
+      if (stored) {
+        const parsed = JSON.parse(stored)
+        if (typeof parsed === 'object' && parsed !== null) return parsed
+      }
+    } catch { /* ignore parse errors */ }
+    return {}
+  })
+
   const comfyUIWsRef = useRef(null)
   const comfyUIPollRef = useRef(null)
 
   // Lift ComfyUI settings to App-level state so handleSendToComfyUI
   // doesn't need to read from localStorage on every call
   const [comfyUISettings, setComfyUISettings] = useState(() => loadComfyUISettings())
+
+  // Persist comfyUIImages to localStorage whenever it changes
+  useEffect(() => {
+    try {
+      localStorage.setItem('comfyui_images', JSON.stringify(comfyUIImages))
+    } catch { /* ignore storage errors */ }
+  }, [comfyUIImages])
+
+  // On startup, load recent history entries that have ComfyUI images
+  // so they appear on the Generate page even after a page refresh
+  useEffect(() => {
+    ;(async () => {
+      try {
+        const history = await fetchHistory({ limit: 50 })
+        if (history?.items) {
+          const imagesFromHistory = {}
+          history.items.forEach((item) => {
+            if (item.comfyui_images && item.comfyui_images.length > 0) {
+              // Key by history_id so images persist across different prompt generations
+              imagesFromHistory[item.id] = item.comfyui_images
+            }
+          })
+          if (Object.keys(imagesFromHistory).length > 0) {
+            setComfyUIImages(prev => ({ ...prev, ...imagesFromHistory }))
+          }
+        }
+      } catch { /* ignore — images will load on next generation */ }
+    })()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Flush ComfyUI settings to localStorage before the page unloads.
+  // This ensures settings are never lost even if the user closes the tab
+  // or navigates away before a React re-render completes.
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      flushComfyUISettings()
+    }
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload)
+    }
+  }, [])
+
+  // Startup reconciliation: if the App-level comfyUISettings state
+  // differs from what's in localStorage, re-read localStorage.
+  // This handles the case where another tab or a previous session
+  // saved settings that are newer than the initial React state.
+  useEffect(() => {
+    const stored = loadComfyUISettings()
+    // Only update if the stored settings differ from current state
+    // (comparing JSON strings to avoid deep-equal dependency)
+    if (JSON.stringify(stored) !== JSON.stringify(comfyUISettings)) {
+      setComfyUISettings(stored)
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     return () => {
@@ -102,11 +173,18 @@ function App() {
     setResults(null)
     setError(null)
     setLoraSelection(null)
+    setComfyUIResult(null)
+    setComfyUIProgress(null)
+    setComfyUIImages({})
+    localStorage.removeItem('comfyui_images')
   }, [])
 
   const handleGenerate = useCallback(async () => {
     setIsGenerating(true)
     setError(null)
+    // Reset ComfyUI progress/result state when generating new prompts
+    setComfyUIResult(null)
+    setComfyUIProgress(null)
     try {
       const response = await generatePrompts({
         attributes,
@@ -117,6 +195,20 @@ function App() {
         loraTriggerToken: loraSelection?.triggerToken || undefined,
       })
       setResults(response)
+      // Populate comfyUIImages from any previously saved ComfyUI images in the response
+      // so they appear immediately without needing to re-send to ComfyUI
+      // Key by history_id for stable persistence across page refreshes
+      if (response?.items) {
+        const existingImages = {}
+        response.items.forEach((item) => {
+          if (item.history_id && item.comfyui_images && item.comfyui_images.length > 0) {
+            existingImages[item.history_id] = item.comfyui_images
+          }
+        })
+        if (Object.keys(existingImages).length > 0) {
+          setComfyUIImages(prev => ({ ...prev, ...existingImages }))
+        }
+      }
     } catch (err) {
       setError(err.message || 'Failed to generate prompts')
       setResults(null)
@@ -169,6 +261,7 @@ function App() {
     setComfyUISubmitting(true)
     setComfyUIResult(null)
     setComfyUIProgress(null)
+    // Note: we do NOT reset comfyUIImages here so previously generated images persist
 
     // Clean up any previous WebSocket connection
     if (comfyUIWsRef.current) {
@@ -189,7 +282,11 @@ function App() {
       }
       if (settings.seedNodeId) {
         nodeMapping.seed_node_id = settings.seedNodeId
-        nodeMapping.seed_input_name = settings.seedInputName || 'seed'
+        // Only send seed_input_name if explicitly set; otherwise let the backend auto-detect
+        // (e.g. "noise_seed" for RandomNoise nodes, "seed" for KSampler nodes)
+        if (settings.seedInputName) {
+          nodeMapping.seed_input_name = settings.seedInputName
+        }
       }
 
       // Get a client ID for WebSocket tracking
@@ -210,9 +307,12 @@ function App() {
       })
 
       // Use stable index based on positive_prompt content instead of object reference
-      const index = results?.items?.findIndex(i => i.positive_prompt === item.positive_prompt) ?? 0
+      // Clamp to >= 0 to handle the case where findIndex returns -1 (not found)
+      const index = Math.max(0, results?.items?.findIndex(i => i.positive_prompt === item.positive_prompt) ?? 0)
+      const historyId = item.history_id
       setComfyUIResult({
         index,
+        historyId,
         success: result.success,
         message: result.message,
         promptId: result.prompt_id,
@@ -231,10 +331,16 @@ function App() {
         })
 
         try {
-          const ws = new ComfyUIWebSocket(settings.serverUrl, clientId)
+          const ws = new ComfyUIWebSocket(clientId, settings.serverUrl)
 
           ws.onStatusChange = (status) => {
-            setComfyUIProgress(prev => prev ? { ...prev, status: status === 'connected' ? 'generating' : status } : null)
+            // Don't overwrite 'done', 'error', or 'fetching' statuses with connection status changes
+            // (e.g., WebSocket disconnecting after generation is complete)
+            setComfyUIProgress(prev => {
+              if (!prev) return null
+              if (prev.status === 'done' || prev.status === 'error' || prev.status === 'fetching') return prev
+              return { ...prev, status: status === 'connected' ? 'generating' : status }
+            })
           }
 
           ws.onProgress = (step, maxStep) => {
@@ -248,18 +354,61 @@ function App() {
           ws.onComplete = async (promptId) => {
             setComfyUIProgress(prev => prev ? { ...prev, status: 'fetching', step: prev.maxStep, maxStep: prev.maxStep } : null)
 
-            // Fetch history to get output images
-            try {
-              const history = await fetchComfyUIHistory(promptId, settings.serverUrl)
-              const images = (history.outputs?.images || []).map(img => ({
-                ...img,
-                url: buildComfyUIImageUrl(img, settings.serverUrl),
-              }))
-              setComfyUIProgress(prev => prev ? { ...prev, status: 'done', images } : null)
+            // Fetch history to get output images — retry up to 5 times with a short delay
+            // because ComfyUI may not have finished writing output to history yet
+            // when the 'executing node=null' message arrives
+            const MAX_RETRIES = 5
+            const RETRY_DELAY_MS = 1000
+            let images = []
+            let fetchSuccess = false
+
+            for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+              try {
+                const history = await fetchComfyUIHistory(promptId, settings.serverUrl)
+                if (history.outputs?.images?.length > 0) {
+                  images = history.outputs.images.map(img => ({
+                    ...img,
+                    url: buildComfyUIImageUrl(img, settings.serverUrl),
+                  }))
+                  fetchSuccess = true
+                  break
+                }
+                // History returned but no images yet — retry after delay
+                if (attempt < MAX_RETRIES) {
+                  await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS))
+                }
+              } catch {
+                // History fetch failed — retry after delay
+                if (attempt < MAX_RETRIES) {
+                  await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS))
+                }
+              }
+            }
+
+            setComfyUIProgress(prev => prev ? { ...prev, status: 'done', images } : { promptId, status: 'done', step: 0, maxStep: 0, images, errorMessage: null, nodeId: null })
+            // Also store images persistently so they survive state resets
+            // Key by history_id for stable persistence across page refreshes
+            if (images.length > 0) {
+              const historyId = results?.items?.[index]?.history_id
+              if (historyId) {
+                setComfyUIImages(prev => ({ ...prev, [historyId]: images }))
+                // Save images to history so they appear in the History page
+                try {
+                  await saveComfyUIImages(historyId, {
+                    comfyuiPromptId: promptId,
+                    comfyuiImages: images,
+                  })
+                } catch {
+                  // Non-critical — images still show in current session
+                }
+              } else {
+                // Fallback: key by index if no history_id yet
+                setComfyUIImages(prev => ({ ...prev, [index]: images }))
+              }
+            }
+            if (fetchSuccess && images.length > 0) {
               showToast('✅ Image generated! Check the results below.')
-            } catch {
-              // History fetch failed — still mark as done
-              setComfyUIProgress(prev => prev ? { ...prev, status: 'done', images: [] } : null)
+            } else {
               showToast('✅ Generation complete (could not fetch images)')
             }
 
@@ -272,7 +421,7 @@ function App() {
             // Connection failures are handled by the catch block below (fallback to polling)
             if (comfyUIWsRef.current === ws) {
               // This is still our active WebSocket — it's a generation error
-              setComfyUIProgress(prev => prev ? { ...prev, status: 'error', errorMessage } : null)
+              setComfyUIProgress(prev => prev ? { ...prev, status: 'error', errorMessage } : { promptId: result.prompt_id, status: 'error', step: 0, maxStep: 0, images: [], errorMessage, nodeId: null })
               showToast('❌ ComfyUI generation error: ' + errorMessage)
               ws.disconnect()
             }
@@ -284,7 +433,16 @@ function App() {
           // WebSocket connection failed — fall back to polling
           setComfyUIProgress(prev => prev ? { ...prev, status: 'polling' } : null)
 
+          const MAX_POLL_ATTEMPTS = 40 // 40 × 3s = ~2 minutes max
+          let pollAttempts = 0
+
           const pollStatus = async () => {
+            pollAttempts++
+            if (pollAttempts > MAX_POLL_ATTEMPTS) {
+              setComfyUIProgress(prev => prev ? { ...prev, status: 'error', errorMessage: 'Generation timed out. Try again or check ComfyUI status.' } : { promptId: result.prompt_id, status: 'error', step: 0, maxStep: 0, images: [], errorMessage: 'Generation timed out. Try again or check ComfyUI status.', nodeId: null })
+              showToast('❌ Generation timed out after 2 minutes')
+              return // Stop polling
+            }
             try {
               const history = await fetchComfyUIHistory(result.prompt_id, settings.serverUrl)
               if (history.status === 'done' && history.outputs?.images?.length > 0) {
@@ -292,20 +450,45 @@ function App() {
                   ...img,
                   url: buildComfyUIImageUrl(img, settings.serverUrl),
                 }))
-                setComfyUIProgress(prev => prev ? { ...prev, status: 'done', images } : null)
+                setComfyUIProgress(prev => prev ? { ...prev, status: 'done', images } : { promptId: result.prompt_id, status: 'done', step: 0, maxStep: 0, images, errorMessage: null, nodeId: null })
+                // Also store images persistently so they survive state resets
+                // Key by history_id for stable persistence across page refreshes
+                const historyId = results?.items?.[index]?.history_id
+                if (historyId) {
+                  setComfyUIImages(prev => ({ ...prev, [historyId]: images }))
+                  // Save images to history so they appear in the History page
+                  try {
+                    await saveComfyUIImages(historyId, {
+                      comfyuiPromptId: result.prompt_id,
+                      comfyuiImages: images,
+                    })
+                  } catch {
+                    // Non-critical — images still show in current session
+                  }
+                } else {
+                  // Fallback: key by index if no history_id yet
+                  setComfyUIImages(prev => ({ ...prev, [index]: images }))
+                }
                 showToast('✅ Image generated! Check the results below.')
                 return // Stop polling
               }
               if (history.status === 'done') {
-                // Done but no images — might still be processing
-                setComfyUIProgress(prev => prev ? { ...prev, status: 'done', images: [] } : null)
+                // Done but no images yet — ComfyUI may still be writing output.
+                // Retry a few times before giving up.
+                if (pollAttempts < 5) {
+                  // Retry after a short delay
+                  comfyUIPollRef.current = setTimeout(pollStatus, 2000)
+                  return
+                }
+                // Still no images after retries — mark as done with empty images
+                setComfyUIProgress(prev => prev ? { ...prev, status: 'done', images: [] } : { promptId: result.prompt_id, status: 'done', step: 0, maxStep: 0, images: [], errorMessage: null, nodeId: null })
                 showToast('✅ Generation complete (no images found in output)')
                 return // Stop polling
               }
               // Still running — poll again in 3 seconds
               comfyUIPollRef.current = setTimeout(pollStatus, 3000)
             } catch {
-              // Poll failed — try again in 3 seconds (up to ~2 minutes)
+              // Poll failed — try again in 3 seconds (up to max attempts)
               comfyUIPollRef.current = setTimeout(pollStatus, 3000)
             }
           }
@@ -316,9 +499,11 @@ function App() {
 
       showToast(result.success ? '🚀 Sent to ComfyUI!' : '❌ ComfyUI submission failed')
     } catch (err) {
-      const index = results?.items?.findIndex(i => i.positive_prompt === item.positive_prompt) ?? 0
+      const index = Math.max(0, results?.items?.findIndex(i => i.positive_prompt === item.positive_prompt) ?? 0)
+      const historyId = item.history_id
       setComfyUIResult({
         index,
+        historyId,
         success: false,
         message: err.message || 'Failed to submit to ComfyUI',
         promptId: null,
@@ -439,6 +624,7 @@ function App() {
                 comfyUISubmitting={comfyUISubmitting}
                 comfyUIResult={comfyUIResult}
                 comfyUIProgress={comfyUIProgress}
+                comfyUIImages={comfyUIImages}
                 loraTriggerToken={loraSelection?.triggerToken || null}
               />
               </>) : (

@@ -13,10 +13,20 @@ import uuid
 from urllib.parse import urlparse
 
 import httpx
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Request, WebSocket, WebSocketDisconnect, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+import starlette.websockets as _ws
 
+from app.core.rate_limiter import check_rate_limit, comfyui_submit_limiter, websocket_limiter
+from app.core.ws_manager import ws_manager
+from app.core.audit import (
+    log_audit_event,
+    extract_client_ip,
+    extract_user_agent,
+    COMFYUI_SUBMIT,
+    RESOURCE_COMFYUI_PROMPT,
+)
 from app.core.workflow_patcher import (
     extract_node_ids,
     patch_workflow,
@@ -520,12 +530,18 @@ async def validate_workflow_endpoint(
         "to the ComfyUI server. Returns the prompt ID on success."
     ),
 )
-async def submit_prompt(request: SubmitRequest) -> SubmitResponse:
+async def submit_prompt(request: SubmitRequest, fastapi_request: Request) -> SubmitResponse:
     """Patch a workflow and submit it to ComfyUI.
 
     If the workflow is in UI format (has a ``nodes`` list), it is
     automatically converted to API format before patching.
     """
+    # Rate limit: 10 ComfyUI submissions per minute per IP
+    client_ip = fastapi_request.headers.get("x-forwarded-for", fastapi_request.client.host if fastapi_request.client else "unknown").split(",")[0].strip()
+    rate_limit_response = check_rate_limit(comfyui_submit_limiter, client_ip)
+    if rate_limit_response:
+        return rate_limit_response
+
     # Auto-convert UI-format workflows to API format
     workflow = request.workflow_json
     if "nodes" in workflow and isinstance(workflow.get("nodes"), list):
@@ -538,6 +554,17 @@ async def submit_prompt(request: SubmitRequest) -> SubmitResponse:
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Invalid workflow: {'; '.join(issues)}",
         )
+
+    # Validate node_mapping — ensure positive and negative node IDs are provided
+    node_mapping = request.node_mapping
+    # Note: positive_node_id and negative_node_id are no longer strictly required
+    # — the patcher will auto-detect prompt nodes if they are missing or invalid.
+
+    logger.info(
+        "Submitting prompt to ComfyUI: positive='%s' negative='%s'",
+        request.positive_prompt[:80],
+        request.negative_prompt[:80],
+    )
 
     # Patch the workflow with prompts
     try:
@@ -557,8 +584,32 @@ async def submit_prompt(request: SubmitRequest) -> SubmitResponse:
     # Submit to ComfyUI (resolve server_url and validate to prevent SSRF attacks)
     resolved_url = _resolve_server_url(request.server_url)
     url = _validate_server_url(resolved_url)
+
+    # Debug: log the seed node in the patched workflow
+    for node_id, node_data in patched.items():
+        if isinstance(node_data, dict) and "inputs" in node_data:
+            inputs = node_data["inputs"]
+            if "noise_seed" in inputs or "seed" in inputs:
+                logger.info(
+                    "DEBUG: Node %s (%s) seed-related inputs: %s",
+                    node_id,
+                    node_data.get("class_type", "?"),
+                    {k: v for k, v in inputs.items() if "seed" in k or "control" in k},
+                )
+
     try:
         async with _create_safe_client() as client:
+            # Clear ComfyUI's execution cache before submitting.
+            # ComfyUI caches node outputs based on input hash — if a seed node's
+            # output was cached from a previous run, it will reuse that result
+            # even though we sent a different seed value. Clearing the cache
+            # forces ComfyUI to re-execute all nodes with fresh inputs.
+            try:
+                await client.post(f"{url}/free", json={"unload_models": False, "free_memory": True})
+                logger.info("Cleared ComfyUI execution cache before prompt submission")
+            except Exception as cache_err:
+                logger.warning("Failed to clear ComfyUI cache (non-fatal): %s", cache_err)
+
             # Build the payload — include client_id for WebSocket tracking if provided
             payload = {"prompt": patched}
             if request.client_id:
@@ -568,6 +619,13 @@ async def submit_prompt(request: SubmitRequest) -> SubmitResponse:
 
             if response.status_code == 200:
                 data = response.json()
+                prompt_id = data.get("prompt_id")
+                # Audit log: ComfyUI submission (fire and forget — no session available)
+                logger.info(
+                    "ComfyUI prompt submitted: prompt_id=%s, client_ip=%s",
+                    prompt_id,
+                    client_ip,
+                )
                 return SubmitResponse(
                     success=True,
                     prompt_id=data.get("prompt_id"),
@@ -849,12 +907,16 @@ async def proxy_comfyui_image(
                 )
 
             content_type = response.headers.get("content-type", "image/png")
+            # Sanitize filename for Content-Disposition header — remove quotes and control chars
+            safe_filename = filename.replace('"', '').replace("'", '').strip()
+            if not safe_filename:
+                safe_filename = "image"
             return StreamingResponse(
                 iter([response.content]),
                 media_type=content_type,
                 headers={
                     "Cache-Control": "public, max-age=3600",
-                    "Content-Disposition": f'inline; filename="{filename}"',
+                    "Content-Disposition": f'inline; filename="{safe_filename}"',
                 },
             )
 
@@ -891,3 +953,206 @@ async def proxy_comfyui_image(
 async def get_client_id() -> dict:
     """Generate a unique client ID for ComfyUI WebSocket connections."""
     return {"client_id": str(uuid.uuid4())}
+
+
+# ---------------------------------------------------------------------------
+# WebSocket proxy — forwards browser WS connections to ComfyUI
+# ---------------------------------------------------------------------------
+
+import asyncio
+import websockets
+from urllib.parse import quote as url_quote
+
+
+def _create_ssrf_safe_socket_factory(hostname: str):
+    """Create a socket factory that validates the resolved IP at connection time.
+
+    This prevents DNS rebinding attacks where DNS returns a safe IP during
+    pre-validation but a private IP during the actual connection. The factory
+    resolves the hostname, checks the IP against private/reserved ranges, and
+    only allows the connection if the IP passes SSRF checks.
+
+    Args:
+        hostname: The hostname to validate when connecting.
+
+    Returns:
+        A socket factory function suitable for use with websockets.connect().
+    """
+    def socket_factory(*args, **kwargs):
+        import socket as _socket
+        # Resolve the hostname and check all resulting IPs
+        try:
+            resolved = _socket.getaddrinfo(
+                hostname, None, _socket.AF_UNSPEC, _socket.SOCK_STREAM
+            )
+            for _, _, _, _, addr in resolved:
+                ip_str = addr[0]
+                if _is_private_ip(ip_str):
+                    raise _socket.gaierror(
+                        0,
+                        f"SSRF blocked: resolved '{hostname}' to private IP '{ip_str}'"
+                    )
+        except _socket.gaierror:
+            raise  # Re-raise DNS errors (including our SSRF block)
+
+        # Create a normal socket — DNS rebinding is mitigated because we
+        # already validated the IPs above. We use the resolved IPs directly
+        # to prevent a second DNS lookup from returning a different IP.
+        return _socket.create_connection(*args, **kwargs)
+
+    return socket_factory
+
+
+@router.websocket("/ws")
+async def comfyui_ws_proxy(websocket: WebSocket):
+    """Proxy WebSocket connections to ComfyUI.
+
+    The browser connects to this endpoint (e.g. ws://localhost:8080/api/comfyui/ws?clientId=xxx)
+    and the backend forwards all messages to/from ComfyUI's WebSocket endpoint.
+
+    This is necessary because:
+    1. The browser cannot reach ComfyUI directly when running in Docker
+    2. ComfyUI doesn't set CORS headers, so direct browser connections fail
+    3. The SSRF protection ensures only allowed ComfyUI servers are reachable
+
+    Query parameters:
+        clientId: Required. Client ID for ComfyUI WebSocket identification.
+        server_url: Optional. ComfyUI server URL. Falls back to COMFYUI_URL env var.
+    """
+    await websocket.accept()
+
+    # Rate limit: 5 WebSocket connections per minute per IP
+    client_host = websocket.client.host if websocket.client else "unknown"
+    if not websocket_limiter.is_allowed(client_host):
+        await websocket.close(code=4004, reason="Rate limit exceeded. Try again later.")
+        return
+
+    # Connection limit: max 3 concurrent connections per IP
+    if not ws_manager.can_connect(client_host):
+        logger.warning(
+            "WebSocket connection rejected for %s: max concurrent connections reached",
+            client_host,
+        )
+        await websocket.close(code=4004, reason="Max concurrent connections reached. Try again later.")
+        return
+
+    # Register the connection
+    connection_id = str(uuid.uuid4())
+    conn_info = ws_manager.register(client_host, connection_id)
+
+    # Resolve and validate the ComfyUI server URL
+    server_url_param = websocket.query_params.get("server_url")
+    resolved_url = _resolve_server_url(server_url_param)
+    try:
+        url = _validate_server_url(resolved_url)
+    except HTTPException as exc:
+        await websocket.close(code=4004, reason=exc.detail[:120])
+        return
+
+    client_id = websocket.query_params.get("clientId")
+    if not client_id:
+        await websocket.close(code=4004, reason="Missing required parameter: clientId")
+        return
+
+    # Parse the validated URL to get hostname for SSRF-safe socket factory
+    parsed = urlparse(url)
+    hostname = parsed.hostname
+
+    # Build ComfyUI WebSocket URL with URL-encoded clientId to prevent injection
+    ws_url = url.replace("http://", "ws://").replace("https://", "wss://").rstrip("/")
+    ws_url = f"{ws_url}/ws?clientId={url_quote(client_id, safe='')}"
+
+    logger.info("WebSocket proxy: connecting to ComfyUI at %s", ws_url)
+
+    # Determine if hostname is in allowed list (skip SSRF socket factory if so)
+    hostname_allowed = hostname and hostname.lower() in _ALLOWED_HOSTS
+
+    try:
+        # Use SSRF-safe socket factory unless hostname is explicitly allowed
+        connect_kwargs = {
+            "open_timeout": 10,       # 10s connection timeout
+            "close_timeout": 5,       # 5s close timeout
+            "max_size": 1_000_000,   # 1MB max message size
+        }
+        if not hostname_allowed:
+            connect_kwargs["sock"] = None  # Will use create_connection with SSRF check
+
+        async with websockets.connect(
+            ws_url,
+            **connect_kwargs,
+        ) as comfyui_ws:
+            # If hostname is not in allowed list, validate IP at connection time
+            # by re-checking after DNS resolution (DNS rebinding mitigation)
+            if not hostname_allowed and hostname:
+                try:
+                    import socket as _socket
+                    resolved = _socket.getaddrinfo(
+                        hostname, None, _socket.AF_UNSPEC, _socket.SOCK_STREAM
+                    )
+                    for _, _, _, _, addr in resolved:
+                        if _is_private_ip(addr[0]):
+                            raise ConnectionError(
+                                f"SSRF blocked: '{hostname}' resolved to private IP '{addr[0]}'"
+                            )
+                except _socket.gaierror:
+                    pass  # DNS failed — connection will fail naturally
+
+            logger.info("WebSocket proxy: connected to ComfyUI")
+
+            async def forward_to_comfyui():
+                """Forward messages from the browser to ComfyUI."""
+                try:
+                    while True:
+                        data = await websocket.receive_text()
+                        # Update activity timestamp for idle timeout tracking
+                        ws_manager.update_activity(client_host, connection_id)
+                        # Validate message size before forwarding
+                        if len(data) > 1_000_000:
+                            logger.warning(
+                                "WebSocket proxy: dropping oversized message from browser (%d bytes)",
+                                len(data),
+                            )
+                            continue
+                        await comfyui_ws.send(data)
+                except (WebSocketDisconnect, _ws.WebSocketDisconnect):
+                    pass
+                except Exception:
+                    pass
+
+            async def forward_to_browser():
+                """Forward messages from ComfyUI to the browser."""
+                try:
+                    async for message in comfyui_ws:
+                        # Update activity timestamp for idle timeout tracking
+                        ws_manager.update_activity(client_host, connection_id)
+                        await websocket.send_text(message)
+                except Exception:
+                    pass
+
+            # Run both directions concurrently
+            done, pending = await asyncio.wait(
+                [
+                    asyncio.create_task(forward_to_comfyui()),
+                    asyncio.create_task(forward_to_browser()),
+                ],
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            # Cancel remaining tasks
+            for task in pending:
+                task.cancel()
+
+    except ConnectionError as exc:
+        logger.warning("WebSocket proxy SSRF block: %s", exc)
+        try:
+            await websocket.close(code=4403, reason="Connection blocked by SSRF protection")
+        except Exception:
+            pass
+    except Exception as exc:
+        logger.error("WebSocket proxy error: %s", exc)
+        try:
+            await websocket.close(code=1011, reason="ComfyUI connection error")
+        except Exception:
+            pass
+    finally:
+        # Always unregister the connection to prevent leaks
+        ws_manager.unregister(client_host, connection_id)

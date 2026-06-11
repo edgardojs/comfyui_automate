@@ -17,7 +17,13 @@ from app.api.characters import router as characters_router
 from app.api.references import router as references_router
 from app.api.training_presets import router as training_presets_router
 from app.api.lora import router as lora_router
+from app.api.storage import router as storage_router
+from app.core.logging_config import setup_logging, set_request_id, get_request_id, clear_request_id
+from app.core.rate_limiter import rate_limit_middleware
 from app.db.database import init_db
+
+# Initialize structured logging
+setup_logging()
 
 # CORS origins — configurable via CORS_ORIGINS env var (comma-separated)
 # Defaults to common local dev servers
@@ -60,6 +66,27 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Rate limiting middleware — applies general API rate limits (100/min)
+# and adds X-RateLimit-* headers to all responses.
+app.middleware("http")(rate_limit_middleware)
+
+
+@app.middleware("http")
+async def request_id_middleware(request: Request, call_next):
+    """Add a request ID to every request for tracing across logs."""
+    # Use X-Request-ID header if provided, otherwise generate a new one
+    request_id = request.headers.get("X-Request-ID") or set_request_id()
+    if not request.headers.get("X-Request-ID"):
+        set_request_id(request_id)
+
+    # Add request ID to response headers
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = request_id
+
+    # Clear request ID after request completes
+    clear_request_id()
+    return response
+
 
 @app.middleware("http")
 async def limit_request_body_size(request: Request, call_next):
@@ -100,6 +127,7 @@ app.include_router(characters_router)
 app.include_router(references_router)
 app.include_router(training_presets_router)
 app.include_router(lora_router)
+app.include_router(storage_router)
 
 
 @app.get("/api/health")

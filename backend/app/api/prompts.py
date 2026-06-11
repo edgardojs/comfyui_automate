@@ -5,8 +5,9 @@ prompts, browsing the attribute library, templates, and negative profiles.
 Generated prompts are automatically saved to the history table.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.prompt_engine import (
@@ -17,6 +18,7 @@ from app.core.prompt_engine import (
     get_pose_batches,
     get_templates,
 )
+from app.core.rate_limiter import check_rate_limit, prompt_limiter
 from app.db.database import CharacterProfileRow, PromptHistoryRow, get_session
 from app.models.prompt import (
     PoseBatchRequest,
@@ -46,9 +48,16 @@ router = APIRouter(prefix="/api", tags=["prompts"])
 )
 async def generate_prompts(
     request: PromptGenerationRequest,
+    fastapi_request: Request,
     session: AsyncSession = Depends(get_session),
 ) -> PromptGenerationResponse:
     """Generate prompt variations and save to history."""
+    # Rate limit: 30 prompt generations per minute per IP
+    client_ip = fastapi_request.headers.get("x-forwarded-for", fastapi_request.client.host if fastapi_request.client else "unknown").split(",")[0].strip()
+    rate_limit_response = check_rate_limit(prompt_limiter, client_ip)
+    if rate_limit_response:
+        return rate_limit_response
+
     template_id = request.template_id or "front_view_sprite"
     negative_profile_id = request.negative_profile_id or "general_sprite_cleanup"
 
@@ -87,6 +96,22 @@ async def generate_prompts(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to save prompt history: {exc}",
             ) from exc
+
+        # Refresh rows to get their IDs and ComfyUI images, then update the response
+        for item in response.items:
+            result = await session.execute(
+                select(PromptHistoryRow).where(
+                    PromptHistoryRow.generation_id == response.generation_id,
+                    PromptHistoryRow.positive_prompt == item.positive_prompt,
+                ).order_by(PromptHistoryRow.id.desc()).limit(1)
+            )
+            row = result.scalar_one_or_none()
+            if row:
+                item.history_id = row.id  # type: ignore[assignment]
+                # Include any previously saved ComfyUI images so the frontend
+                # can display them immediately (e.g. after page refresh)
+                if row.comfyui_images:
+                    item.comfyui_images = row.comfyui_images  # type: ignore[assignment]
 
     return response
 

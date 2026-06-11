@@ -2,20 +2,27 @@
 
 CRUD operations for creating, listing, and retrieving LoRA training jobs.
 Starting and cancelling jobs invoke the training runner subprocess.
+
+All job status changes go through ``app.core.lora_state.transition_job_status``
+which enforces the state machine and uses database-level locking to prevent
+race conditions.
 """
 
 import asyncio
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.caption_generator import get_training_preset, load_training_presets
+from app.core.rate_limiter import check_rate_limit, comfyui_submit_limiter
 from app.core.constants import DEFAULT_BASE_MODEL
 from app.core.dataset_validator import MINIMUM_ACCEPTED_IMAGES
+from app.core.lora_state import InvalidStateTransition, transition_job_status
 from app.core.storage import get_lora_dir
 from app.core.training_runner import (
     cancel_training,
@@ -27,6 +34,17 @@ from app.core.training_runner import (
     start_training,
     wait_for_training,
 )
+from app.core.audit import (
+    log_audit_event,
+    extract_client_ip,
+    extract_user_agent,
+    TRAINING_START,
+    TRAINING_CANCEL,
+    LORA_EXPORT,
+    LORA_DELETE,
+    RESOURCE_LORA_JOB,
+    RESOURCE_CHARACTER,
+)
 from app.db.database import CharacterProfileRow, LoraJobRow, ReferenceImageRow, get_session
 from fastapi import Query
 
@@ -34,10 +52,13 @@ from app.models.lora import (
     GeneratePreviewsResponse,
     ListPreviewsResponse,
     LoRAJob,
+    LoRAJobDeleteResponse,
     LoRAJobStatus,
     LoRAJobSummary,
     LoRATrainingConfig,
     LoRATrainingConfigCreate,
+    LoRAVersionInfo,
+    LoRAVersionListResponse,
     PreviewError,
     PreviewFile,
     PreviewSubmission,
@@ -302,6 +323,7 @@ async def get_lora_job(
 async def start_lora_job(
     job_id: str,
     backend_id: str = "kohya_ss",
+    fastapi_request: Request = None,
     session: AsyncSession = Depends(get_session),
 ) -> LoRAJob:
     """Start a pending LoRA training job.
@@ -312,9 +334,18 @@ async def start_lora_job(
         The training job ID.
     backend_id:
         The training backend to use (default: ``"kohya_ss"``).
+    fastapi_request:
+        FastAPI request object for rate limiting.
     session:
         Async database session.
     """
+    # Rate limit: 10 training starts per minute per IP
+    if fastapi_request is not None:
+        client_ip = fastapi_request.headers.get("x-forwarded-for", fastapi_request.client.host if fastapi_request.client else "unknown").split(",")[0].strip()
+        rate_limit_response = check_rate_limit(comfyui_submit_limiter, client_ip)
+        if rate_limit_response:
+            return rate_limit_response
+
     # Validate backend
     if backend_id != "custom":
         backend = get_training_backend(backend_id)
@@ -337,28 +368,14 @@ async def start_lora_job(
             detail=f"LoRA job '{job_id}' not found",
         )
 
-    if row.status != "pending":  # type: ignore[comparison]
+    # Atomically transition status to 'running' using centralized state machine
+    try:
+        row = await transition_job_status(session, job_id, LoRAJobStatus.RUNNING)
+    except InvalidStateTransition as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"Job '{job_id}' is in '{row.status}' state, "
-                   "only 'pending' jobs can be started.",
+            detail=str(exc),
         )
-
-    # Atomically update status to 'running' to prevent TOCTOU race condition
-    # where two concurrent requests could both start the same job
-    update_result = await session.execute(
-        update(LoraJobRow)
-        .where(LoraJobRow.job_id == job_id, LoraJobRow.status == "pending")
-        .values(status="running", updated_at=datetime.now(timezone.utc))
-    )
-    if update_result.rowcount == 0:
-        # Another request already changed the status
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Job '{job_id}' is no longer in 'pending' state.",
-        )
-    await session.commit()
-    await session.refresh(row)
 
     # Prepare the dataset
     try:
@@ -402,11 +419,18 @@ async def start_lora_job(
         await start_training(job_id, config, dataset_dir, output_dir, backend_id)
     except (ValueError, RuntimeError, FileNotFoundError) as exc:
         # Revert status to failed if we can't start the process
-        row.status = "failed"  # type: ignore[assignment]
-        row.log_output = f"Failed to start training: {exc}"  # type: ignore[assignment]
-        row.updated_at = datetime.now(timezone.utc)
-        await session.commit()
-        await session.refresh(row)
+        try:
+            row = await transition_job_status(
+                session, job_id, LoRAJobStatus.FAILED,
+                log_output=f"Failed to start training: {exc}",
+            )
+        except (InvalidStateTransition, ValueError):
+            # If state transition fails, fall back to direct update
+            row.status = "failed"  # type: ignore[assignment]
+            row.log_output = f"Failed to start training: {exc}"  # type: ignore[assignment]
+            row.updated_at = datetime.now(timezone.utc)
+            await session.commit()
+            await session.refresh(row)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to start training process: {exc}",
@@ -416,6 +440,22 @@ async def start_lora_job(
     # We need a new session for the background task since the current one
     # will be closed after the response
     asyncio.create_task(_monitor_training(job_id))
+
+    # Audit log: training job start
+    if fastapi_request is not None:
+        await log_audit_event(
+            session=session,
+            action=TRAINING_START,
+            resource_type=RESOURCE_LORA_JOB,
+            resource_id=job_id,
+            details={
+                "character_id": row.character_id,
+                "backend_id": backend_id,
+                "base_model": row.base_model,
+            },
+            client_ip=extract_client_ip(fastapi_request),
+            user_agent=extract_user_agent(fastapi_request),
+        )
 
     return _row_to_job(row)
 
@@ -452,6 +492,7 @@ async def _monitor_training(job_id: str) -> None:
 )
 async def cancel_lora_job(
     job_id: str,
+    fastapi_request: Request,
     session: AsyncSession = Depends(get_session),
 ) -> LoRAJob:
     """Cancel a running LoRA training job."""
@@ -465,40 +506,48 @@ async def cancel_lora_job(
             detail=f"LoRA job '{job_id}' not found",
         )
 
-    if row.status != "running":  # type: ignore[comparison]
+    # Atomically transition status to 'cancelled' using centralized state machine
+    try:
+        row = await transition_job_status(session, job_id, LoRAJobStatus.CANCELLED)
+    except InvalidStateTransition as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"Job '{job_id}' is in '{row.status}' state, "
-                   "only 'running' jobs can be cancelled.",
+            detail=str(exc),
         )
-
-    # Atomically update status to 'failed' to prevent TOCTOU race condition
-    # where two concurrent requests could both cancel the same job
-    update_result = await session.execute(
-        update(LoraJobRow)
-        .where(LoraJobRow.job_id == job_id, LoraJobRow.status == "running")
-        .values(status="failed", updated_at=datetime.now(timezone.utc))
-    )
-    if update_result.rowcount == 0:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Job '{job_id}' is no longer in 'running' state.",
-        )
-    await session.commit()
-    await session.refresh(row)
 
     # Cancel the training process
     cancelled = await cancel_training(job_id)
 
+    # Audit log: training job cancel
+    await log_audit_event(
+        session=session,
+        action=TRAINING_CANCEL,
+        resource_type=RESOURCE_LORA_JOB,
+        resource_id=job_id,
+        details={
+            "character_id": row.character_id,
+            "process_killed": cancelled,
+        },
+        client_ip=extract_client_ip(fastapi_request),
+        user_agent=extract_user_agent(fastapi_request),
+    )
+
     # Append cancellation info to log
     cancel_msg = "\n\n[Training cancelled by user]"
-    if row.log_output:
-        row.log_output = row.log_output + cancel_msg  # type: ignore[assignment]
-    else:
-        row.log_output = cancel_msg  # type: ignore[assignment]
-
-    await session.commit()
-    await session.refresh(row)
+    try:
+        row = await transition_job_status(
+            session, job_id, LoRAJobStatus.CANCELLED,
+            log_output=(row.log_output or "") + cancel_msg,
+        )
+    except (InvalidStateTransition, ValueError):
+        # If we can't update the log via state transition (already cancelled),
+        # just append directly
+        if row.log_output:
+            row.log_output = row.log_output + cancel_msg  # type: ignore[assignment]
+        else:
+            row.log_output = cancel_msg  # type: ignore[assignment]
+        await session.commit()
+        await session.refresh(row)
 
     logger.info("Job %s cancelled (process killed: %s)", job_id, cancelled)
     return _row_to_job(row)
@@ -674,11 +723,11 @@ async def generate_previews(
             detail=f"LoRA job '{job_id}' not found",
         )
 
-    if row.status != "completed":  # type: ignore[comparison]
+    if row.status not in ("completed", "cancelled"):  # type: ignore[comparison]
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Job '{job_id}' is in '{row.status}' state, "
-                   "only 'completed' jobs can generate previews.",
+                   "only 'completed' or 'cancelled' jobs can generate previews.",
         )
 
     # Fetch the character profile
@@ -1218,6 +1267,339 @@ async def get_workflow_template(
         "metadata": metadata,
         "workflow": workflow,
     }
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# GET /api/lora/jobs/{job_id}/versions — List versioned LoRA files
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/jobs/{job_id}/versions",
+    response_model=LoRAVersionListResponse,
+    summary="List versioned LoRA files for a job",
+    description=(
+        "Scan the LoRA output directory for versioned LoRA files matching "
+        "the naming convention ``{Project}_{Character}_{Style}_v{N}.safetensors``. "
+        "Returns version number, filename, size, and metadata for each version."
+    ),
+    responses={404: {"description": "Job not found"}},
+)
+async def list_lora_versions(
+    job_id: str,
+    session: AsyncSession = Depends(get_session),
+) -> LoRAVersionListResponse:
+    """List versioned LoRA files for a training job."""
+    from app.core.lora_metadata import load_lora_metadata
+
+    # Fetch the job
+    result = await session.execute(
+        select(LoraJobRow).where(LoraJobRow.job_id == job_id)
+    )
+    row = result.scalar_one_or_none()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"LoRA job '{job_id}' not found",
+        )
+
+    # Fetch the character profile
+    char_result = await session.execute(
+        select(CharacterProfileRow).where(
+            CharacterProfileRow.character_id == row.character_id
+        )
+    )
+    char_row = char_result.scalar_one_or_none()
+    if char_row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Character profile '{row.character_id}' not found",
+        )
+
+    # Scan the LoRA directory for versioned files
+    lora_dir = get_lora_dir(char_row.project_name, char_row.character_name)
+    versions: list[LoRAVersionInfo] = []
+
+    if lora_dir.exists():
+        import re
+
+        # Pattern: {Project}_{Character}_{Style}_v{N}.{ext}
+        version_pattern = re.compile(r"_v(\d+)\.(safetensors|pt|ckpt)$", re.IGNORECASE)
+        for f in sorted(lora_dir.iterdir()):
+            if not f.is_file():
+                continue
+            match = version_pattern.search(f.name)
+            if match:
+                version_num = int(match.group(1))
+                # Try to load metadata for this version
+                metadata = load_lora_metadata(str(f))
+                # Get file creation time
+                try:
+                    created = datetime.fromtimestamp(
+                        f.stat().st_ctime, tz=timezone.utc
+                    ).isoformat()
+                except OSError:
+                    created = None
+                versions.append(LoRAVersionInfo(
+                    version=version_num,
+                    filename=f.name,
+                    size=f.stat().st_size,
+                    created_at=created,
+                    metadata=metadata,
+                ))
+
+    # Sort by version number
+    versions.sort(key=lambda v: v.version)
+
+    return LoRAVersionListResponse(
+        job_id=job_id,
+        character_id=row.character_id,
+        versions=versions,
+        total=len(versions),
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET /api/lora/jobs/{job_id}/download — Download LoRA file
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/jobs/{job_id}/download",
+    summary="Download the trained LoRA file",
+    description=(
+        "Download the trained LoRA file for a completed training job. "
+        "Returns the file as an attachment with the appropriate "
+        "Content-Disposition header."
+    ),
+    responses={
+        404: {"description": "Job not found"},
+        409: {"description": "Job is not in 'completed' state"},
+        400: {"description": "No LoRA output file found"},
+    },
+)
+async def download_lora_file(
+    job_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    """Download the trained LoRA file for a completed job.
+
+    Parameters
+    ----------
+    job_id:
+        The training job ID.
+    session:
+        Async database session.
+
+    Returns
+    -------
+    FileResponse
+        The LoRA file as a downloadable attachment.
+    """
+    from pathlib import Path as PathLib
+
+    # Fetch the job
+    result = await session.execute(
+        select(LoraJobRow).where(LoraJobRow.job_id == job_id)
+    )
+    row = result.scalar_one_or_none()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"LoRA job '{job_id}' not found",
+        )
+
+    if row.status != "completed":  # type: ignore[comparison]
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Job '{job_id}' is in '{row.status}' state, "
+                   "only 'completed' jobs can be downloaded.",
+        )
+
+    # Fetch the character profile (needed to search lora dir)
+    char_result = await session.execute(
+        select(CharacterProfileRow).where(
+            CharacterProfileRow.character_id == row.character_id
+        )
+    )
+    char_row = char_result.scalar_one_or_none()
+
+    # Find the LoRA output file
+    lora_path = row.output_lora_path
+    if not lora_path and char_row is not None:
+        lora_dir = get_lora_dir(char_row.project_name, char_row.character_name)
+        for ext in ["*.safetensors", "*.pt", "*.ckpt"]:
+            matches = list(lora_dir.glob(ext))
+            if matches:
+                lora_path = str(matches[-1])
+                break
+
+    if not lora_path:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No LoRA output file found for this job.",
+        )
+
+    lora_file = PathLib(lora_path)
+    if not lora_file.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"LoRA file not found on disk: {lora_path}",
+        )
+
+    return FileResponse(
+        path=str(lora_file),
+        filename=lora_file.name,
+        media_type="application/octet-stream",
+    )
+
+
+# ---------------------------------------------------------------------------
+# DELETE /api/lora/jobs/{job_id} — Delete a LoRA job
+# ---------------------------------------------------------------------------
+
+
+@router.delete(
+    "/jobs/{job_id}",
+    response_model=LoRAJobDeleteResponse,
+    summary="Delete a LoRA training job",
+    description=(
+        "Delete a LoRA training job and its associated output files. "
+        "Only jobs in 'completed', 'failed', or 'cancelled' state can be "
+        "deleted. Running jobs must be cancelled first."
+    ),
+    responses={
+        404: {"description": "Job not found"},
+        409: {"description": "Job is in 'running' or 'pending' state"},
+    },
+)
+async def delete_lora_job(
+    job_id: str,
+    fastapi_request: Request,
+    session: AsyncSession = Depends(get_session),
+) -> LoRAJobDeleteResponse:
+    """Delete a LoRA training job and its associated files.
+
+    Parameters
+    ----------
+    job_id:
+        The training job ID.
+    fastapi_request:
+        FastAPI request object for audit logging.
+    session:
+        Async database session.
+    """
+    import os
+    import shutil
+    from pathlib import Path as PathLib
+    from app.core.storage import get_previews_dir
+
+    # Fetch the job
+    result = await session.execute(
+        select(LoraJobRow).where(LoraJobRow.job_id == job_id)
+    )
+    row = result.scalar_one_or_none()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"LoRA job '{job_id}' not found",
+        )
+
+    # Prevent deletion of running or pending jobs
+    if row.status in ("running", "pending"):  # type: ignore[comparison]
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Cannot delete job '{job_id}' in '{row.status}' state. "
+                   "Cancel the job first before deleting.",
+        )
+
+    # Fetch the character profile for directory paths
+    char_result = await session.execute(
+        select(CharacterProfileRow).where(
+            CharacterProfileRow.character_id == row.character_id
+        )
+    )
+    char_row = char_result.scalar_one_or_none()
+
+    deleted_files: list[str] = []
+
+    # Delete LoRA output file and its metadata
+    if row.output_lora_path:
+        lora_path = PathLib(row.output_lora_path)
+        if lora_path.exists():
+            deleted_files.append(str(lora_path))
+            lora_path.unlink()
+        # Also delete metadata JSON
+        metadata_path = lora_path.with_suffix(".json")
+        if metadata_path.exists():
+            deleted_files.append(str(metadata_path))
+            metadata_path.unlink()
+
+    # Also scan the lora directory for any versioned files associated with this job
+    if char_row is not None:
+        lora_dir = get_lora_dir(char_row.project_name, char_row.character_name)
+        if lora_dir.exists():
+            # Delete any LoRA files in the directory that match the job's output
+            # We don't delete the entire directory — other jobs may have files there
+            for f in lora_dir.iterdir():
+                if f.is_file() and f.suffix in (".safetensors", ".pt", ".ckpt"):
+                    # Only delete if it matches the output path or is a versioned copy
+                    if row.output_lora_path and (
+                        str(f) == row.output_lora_path
+                        or f.name == PathLib(row.output_lora_path).name
+                    ):
+                        deleted_files.append(str(f))
+                        f.unlink()
+                        # Also delete matching metadata
+                        meta = f.with_suffix(".json")
+                        if meta.exists():
+                            deleted_files.append(str(meta))
+                            meta.unlink()
+
+    # Delete preview files for this job
+    if char_row is not None:
+        previews_dir = get_previews_dir(char_row.project_name, char_row.character_name)
+        if previews_dir.exists():
+            for f in previews_dir.iterdir():
+                if f.is_file():
+                    deleted_files.append(str(f))
+            if previews_dir.exists() and any(previews_dir.iterdir()):
+                # Only remove files, not the directory itself
+                for f in list(previews_dir.iterdir()):
+                    f.unlink()
+
+    # Delete the job record from the database
+    character_id = row.character_id  # type: ignore[assignment]
+    await session.delete(row)
+    await session.commit()
+
+    # Audit log: LoRA job deletion
+    if fastapi_request is not None:
+        await log_audit_event(
+            session=session,
+            action=LORA_DELETE,
+            resource_type=RESOURCE_LORA_JOB,
+            resource_id=job_id,
+            details={
+                "character_id": character_id,
+                "deleted_files_count": len(deleted_files),
+            },
+            client_ip=extract_client_ip(fastapi_request),
+            user_agent=extract_user_agent(fastapi_request),
+        )
+
+    logger.info("Deleted LoRA job %s (%d files removed)", job_id, len(deleted_files))
+
+    return LoRAJobDeleteResponse(
+        job_id=job_id,
+        character_id=character_id,
+        deleted_files=deleted_files,
+    )
 
 
 # ---------------------------------------------------------------------------

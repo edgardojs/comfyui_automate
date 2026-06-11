@@ -78,6 +78,17 @@ class PromptPair(BaseModel):
         default_factory=dict,
         description="The resolved attributes used to generate this prompt pair",
     )
+    history_id: int | None = Field(
+        default=None,
+        description="Database ID of the history entry for this prompt pair",
+    )
+    comfyui_images: list[dict] | None = Field(
+        default=None,
+        description=(
+            "ComfyUI output images for this prompt pair, if available. "
+            "Each image has filename, subfolder, type, and url fields."
+        ),
+    )
 
 
 class PromptGenerationResponse(BaseModel):

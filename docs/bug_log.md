@@ -1,5 +1,454 @@
 # Bug Log
 
+## P0 Feature Implementation — LoRA Detail Completion (2026-06-11)
+
+### P0-1: Download LoRA Button
+**Files:** `backend/app/api/lora.py`, `frontend/src/api/client.js`, `frontend/src/components/LoraDetail.jsx`
+**Severity:** Feature
+**Description:** No way to download the trained LoRA file from the UI.
+**Fix:** ✅ Added `GET /api/lora/jobs/{job_id}/download` endpoint returning `FileResponse`. Added `getLoRADownloadUrl()` to API client. Added download button in `LoraDetail.jsx` using native `<a download>` link.
+
+### P0-2: Version History List
+**Files:** `backend/app/api/lora.py`, `backend/app/models/lora.py`, `frontend/src/api/client.js`, `frontend/src/components/LoraDetail.jsx`
+**Severity:** Feature
+**Description:** No way to view versioned LoRA files for a character.
+**Fix:** ✅ Added `GET /api/lora/jobs/{job_id}/versions` endpoint scanning the LoRA directory for versioned files. Added `LoRAVersionInfo` and `LoRAVersionListResponse` Pydantic models. Added `fetchLoRAVersions()` to API client. Added version history section in `LoraDetail.jsx` with refresh button.
+
+### P0-3: Delete LoRA Action
+**Files:** `backend/app/api/lora.py`, `backend/app/models/lora.py`, `frontend/src/api/client.js`, `frontend/src/components/LoraDetail.jsx`, `frontend/src/components/TrainingConfig.jsx`
+**Severity:** Feature
+**Description:** No way to delete a LoRA job and its files from the UI.
+**Fix:** ✅ Added `DELETE /api/lora/jobs/{job_id}` endpoint with state validation (only completed/failed/cancelled jobs can be deleted). Added `LoRAJobDeleteResponse` model. Added `deleteLoRAJob()` to API client. Added danger zone with confirmation dialog in `LoraDetail.jsx`. Integrated `LoraDetail` into `TrainingConfig.jsx` with clickable completed jobs and `onDelete` callback.
+
+## P1 Implementation Plan — In Progress (2026-06-13)
+
+### P1-1: Add Rate Limiting
+**Files:** `backend/app/core/rate_limiter.py`, `backend/app/main.py`, `backend/app/api/prompts.py`, `backend/app/api/comfyui.py`, `backend/app/api/references.py`, `backend/app/api/lora.py`, `backend/tests/test_rate_limiter.py`, `backend/tests/conftest.py`
+**Severity:** High
+**Description:** No rate limiting on API endpoints. An attacker could exhaust backend resources with rapid requests.
+**Fix:** ✅ Created `SlidingWindowCounter` rate limiter with per-IP sliding window. Added middleware for general API rate limiting (100/min). Added endpoint-specific rate limits: prompt generation (30/min), ComfyUI submit (10/min), image upload (20/min), WebSocket connections (5/min). Added `RATE_LIMIT_DISABLED` env var for testing. 32 tests pass.
+
+### P1-2: Add WebSocket Connection Limits
+**Files:** `backend/app/core/ws_manager.py`, `backend/app/api/comfyui.py`, `backend/tests/test_ws_manager.py`
+**Severity:** High
+**Description:** No limit on WebSocket connections. An attacker could exhaust backend resources.
+**Fix:** ✅ Created `WebSocketConnectionManager` with per-IP connection tracking (max 3 concurrent), idle timeout detection (5 min), activity tracking, and connection/disconnection logging. Integrated into ComfyUI WebSocket proxy with `can_connect()` check, `register()`/`unregister()` lifecycle, and `update_activity()` on each message. 31 tests pass.
+
+### P1-3: Add Training Job Quotas and Command Safety
+**Files:** `backend/app/core/training_quotas.py`, `backend/app/core/training_runner.py`, `backend/tests/test_training_quotas.py`
+**Severity:** High
+**Description:** No limits on training jobs. Command templates could be exploited for arbitrary command execution.
+**Fix:** ✅ Created `TrainingQuotaManager` with max 3 concurrent jobs, max 10 daily jobs per user. Added `validate_command_safety()` to allowlist command prefixes (accelerate launch, python, python3) and block shell injection patterns. Added `validate_custom_args()` with key format validation and value length limits (500 chars). Integrated into `training_runner.py` with quota checks on start, register/unregister lifecycle, and 24-hour training timeout. 43 tests pass.
+
+### P1-4: Adopt Alembic Migrations
+**Files:** `backend/alembic.ini`, `backend/alembic/env.py`, `backend/alembic/versions/001_baseline.py`, `backend/app/db/database.py`, `backend/requirements.txt`
+**Severity:** Medium
+**Description:** Database schema changes were applied via ad-hoc ALTER TABLE statements in `init_db()`, which is fragile and doesn't support rollback.
+**Fix:** ✅ Added `alembic==1.14.1` to requirements.txt. Created Alembic configuration with async SQLAlchemy support. Created baseline migration capturing the full current schema including the previously ad-hoc `comfyui_prompt_id` and `comfyui_images` columns. Removed ALTER TABLE statements from `init_db()`. Added Alembic stamp on init for new databases.
+
+### P1-5: Add Structured Logging and Observability
+**Files:** `backend/app/core/logging_config.py`, `backend/app/main.py`, `backend/tests/test_logging_config.py`
+**Severity:** Medium
+**Description:** Logging was inconsistent. No structured logs, no metrics, no job-level tracing.
+**Fix:** ✅ Created `logging_config.py` with JSON-structured and human-readable formatters, request ID tracking via `ContextVar`, and key event logging helpers (ComfyUI connection, workflow validation/submission, WebSocket connection, reference upload, training job, security rejection). Added request ID middleware to `main.py` that generates UUID per request and includes it in response headers. 21 tests pass.
+
+### P1-6: Add Storage Quotas and Cleanup Policy
+**Files:** `backend/app/core/storage_quota.py`, `backend/app/api/storage.py`, `backend/app/api/references.py`, `backend/app/main.py`, `backend/tests/test_storage_quota.py`
+**Severity:** Medium
+**Description:** No limits on reference image storage. Disk can fill over time with no cleanup mechanism.
+**Fix:** ✅ Created `storage_quota.py` with per-project storage quota (500MB default, configurable via `STORAGE_QUOTA_MB` env var), per-character image limit (100 default, configurable via `MAX_IMAGES_PER_CHARACTER` env var), storage usage calculation, and 80% quota warning logging. Created `storage.py` API with `GET /api/storage/usage` (all projects) and `GET /api/storage/usage/{project_name}` (per-project) endpoints. Added `DELETE /api/characters/{id}/references/cleanup` endpoint to remove rejected images from disk and database. Added quota enforcement to `references.py` upload endpoint (checks per-character image limit and per-project storage quota before accepting uploads). Registered storage router in `main.py`. 35 tests pass.
+
+### P1-7: Add Audit Logging for Sensitive Operations
+**Files:** `backend/app/core/audit.py`, `backend/app/db/database.py`, `backend/app/api/references.py`, `backend/app/api/lora.py`, `backend/app/api/characters.py`, `backend/app/api/comfyui.py`, `backend/tests/test_audit.py`
+**Severity:** Medium
+**Description:** No audit trail for uploads, training, exports, and deletions. Sensitive operations were not logged for security and compliance.
+**Fix:** ✅ Created `AuditLogRow` model in `database.py` with columns: id, timestamp, action, resource_type, resource_id, details (JSON), client_ip, user_agent, request_id. Created `audit.py` module with `log_audit_event()` async function, `extract_client_ip()`, `extract_user_agent()`, and action/resource type constants. Added audit logging to: reference image upload/delete/cleanup (`references.py`), training job start/cancel (`lora.py`), character profile delete (`characters.py`), ComfyUI prompt submission (`comfyui.py`). Audit events include client IP (X-Forwarded-For aware), user agent, request ID, and operation-specific details. 22 tests pass.
+
+## P0 Implementation Plan — Completed (2026-06-12)
+
+### P0-1: Fix ComfyUI Settings Persistence
+**Files:** `frontend/src/api/comfyuiSettings.js`, `frontend/src/pages/ComfyUISettings.jsx`, `frontend/src/App.jsx`  
+**Severity:** High  
+**Description:** ComfyUI settings could be lost on page refresh due to 500ms debounced save and no beforeunload handler.  
+**Fix:** ✅ Removed debounce, added immediate `saveComfyUISettings()`, added `flushComfyUISettings()` for beforeunload, added startup reconciliation effect.
+
+### P0-2: Add ComfyUI Regression Test Suite
+**Files:** `backend/tests/test_comfyui_regression.py`, `docs/COMFYUI_REGRESSION_CHECKLIST.md`  
+**Severity:** Medium  
+**Description:** No automated regression tests for the most failure-prone user flow.  
+**Fix:** ✅ Created 85 automated regression tests covering workflow patching (correct/swapped/invalid node IDs), seed auto-detection, control_after_generate, UI-to-API conversion, SSRF validation, workflow validation, node extraction, prompt auto-detection, and end-to-end pipeline. Created manual regression checklist with 20 items.
+
+### P0-3: Add Image Persistence Tests
+**Files:** `backend/tests/test_image_persistence.py`, `frontend/src/test/imagePersistence.test.js`  
+**Severity:** Medium  
+**Description:** No tests verifying that ComfyUI images are correctly stored, retrieved, and keyed by history_id.  
+**Fix:** ✅ Created 17 backend tests (image storage, history retrieval, history_id keying, 404 handling, overwrite behavior, URL generation, metadata structure) and 21 frontend tests (settings persistence, image keying, localStorage persistence, no-overwrite-when-done, metadata structure).
+
+### P0-4: Add Atomic LoRA Job State Transitions
+**Files:** `backend/app/core/lora_state.py`, `backend/tests/test_lora.py`  
+**Severity:** High  
+**Description:** LoRA job state transitions needed atomic validation and locking.  
+**Fix:** ✅ Already implemented. `lora_state.py` provides `transition_job_status()` with `SELECT FOR UPDATE` locking, validated state machine, idempotent transitions, and `InvalidStateTransition` exception. 21 tests pass.
+
+### P0-5: Reconcile WebSocket Endpoint Docs
+**Files:** `docs/SOFTWARE_REPORT.md`, `docs/IMPLEMENTATION_PLAN.md`  
+**Severity:** Low  
+**Description:** Software report listed incorrect WebSocket endpoint `/ws/comfyui/{server_url}` instead of actual `/api/comfyui/ws?clientId=...&server_url=...`.  
+**Fix:** ✅ Updated API reference in SOFTWARE_REPORT.md to show correct endpoint with query parameters. Added note about proxy-only connection requirement.
+
+## ComfyUI Swapped/Incorrect Prompt Node IDs (2026-06-10)
+
+### 🐛 Bug: User had positive_node_id=51 (actually negative prompt) and negative_node_id=13 (SamplerCustomAdvanced, not a text node)
+
+**Files:** `backend/app/core/workflow_patcher.py`, `backend/tests/test_workflow_patcher.py`, `backend/app/api/comfyui.py`  
+**Severity:** Critical  
+**Cross-references:** Root cause of "same character" images — the positive prompt was being injected into the negative prompt node (51), while the actual positive prompt node (6) kept the original workflow text ("hooded fantasy rogue swordsman"). See also "ComfyUI Settings Lost on Page Refresh" for why settings were misconfigured.  
+**Description:** The user's ComfyUI settings had `positive_node_id=51` and `negative_node_id=13`. In the nunchaku workflow:
+- Node 6: CLIPTextEncode with title "CLIP Text Encode (Positive Prompt)" — the ACTUAL positive prompt node
+- Node 51: CLIPTextEncode with title "Clip Text Encode (Negative Prompt)" — the ACTUAL negative prompt node
+- Node 13: SamplerCustomAdvanced — NOT a text prompt node at all
+
+This caused:
+1. The character description (positive prompt) to be injected into node 51 (the negative prompt node)
+2. The quality cleanup text (negative prompt) to be injected into node 13 (SamplerCustomAdvanced, which has no text input)
+3. Node 6 (the actual positive prompt node) to keep the original workflow text ("hooded fantasy rogue swordsman")
+4. Result: the same character generated every time regardless of prompt, because the positive prompt node was never updated
+
+**Fix:** ✅ Added prompt node auto-detection and validation:
+
+1. **`_PROMPT_NODE_TYPES`** — List of node types that encode text prompts (`["CLIPTextEncode"]`).
+
+2. **`_get_node_class_type()`** — Helper to get a node's class_type from either API or UI format workflows.
+
+3. **`_detect_prompt_nodes()`** — Auto-detects positive and negative prompt nodes by:
+   - Scanning all CLIPTextEncode nodes in the workflow
+   - Matching nodes with "Positive" or "Negative" in their title (case-insensitive)
+   - Falling back to positional heuristics (first CLIPTextEncode = positive, second = negative)
+
+4. **Validation in `patch_workflow()`** — Three layers of validation:
+   - **Type check**: Rejects user-provided node IDs that point to non-text nodes (e.g., SamplerCustomAdvanced)
+   - **Swap detection**: Detects when user-provided positive_node_id matches the auto-detected negative node (or vice versa), indicating swapped configuration
+   - **Auto-detect fallback**: If any validation fails, auto-detects both prompt nodes from the workflow
+
+5. **Removed 422 validation** — The backend no longer requires `positive_node_id` and `negative_node_id` in the request; the patcher auto-detects them if missing.
+
+6. **Added 10 new tests** — `TestPromptNodeAutoDetection` class covering auto-detection, swap detection, type validation, and UI/API format handling.
+
+---
+
+## ComfyUI Settings Lost on Page Refresh (2026-06-09)
+
+### 🐛 Bug: ComfyUI settings not persisting, causing same-character images
+
+**Files:** `frontend/src/api/comfyuiSettings.js`, `frontend/src/pages/ComfyUISettings.jsx`  
+**Severity:** High  
+**Cross-references:** Root cause of "same character" images — see also "ComfyUI Seed Node Misconfigured" and "ComfyUI Execution Cache" entries.  
+**Description:** ComfyUI settings (workflow JSON, node IDs, server URL) are stored in React state and auto-saved to localStorage with a 500ms debounce. However, the settings were found to be completely missing from localStorage after a page refresh, causing the app to use default (empty) values. This means:
+
+1. The app cannot submit to ComfyUI without re-configuring settings
+2. If settings were previously misconfigured (e.g., swapped positive/negative node IDs), the wrong prompts would be injected into the wrong nodes
+3. The ComfyUI history confirmed that the positive prompt node (6) was NOT being updated — it kept the original workflow text — while the negative prompt node (51) was receiving the character description (positive prompt text)
+
+**Root cause analysis:** The ComfyUI history showed that node 6 (positive prompt) always contained the original workflow text ("hooded fantasy rogue swordsman...") while node 51 (negative prompt) contained the varied character descriptions. This indicates the user had `positiveNodeId` and `negativeNodeId` swapped in their settings at some point, or the positive prompt injection was failing entirely.
+
+**Status:** 🔍 Under investigation — need to verify settings persistence and add validation to prevent swapped node IDs.
+
+---
+
+## ComfyUI Execution Cache Reusing Same Image Across Runs (2026-06-09)
+
+### 🐛 Bug: ComfyUI caches seed node output, producing identical images despite different seeds
+
+**Files:** `backend/app/api/comfyui.py`, `backend/app/core/workflow_patcher.py`  
+**Severity:** High  
+**Cross-references:** See also "ComfyUI Generating Similar Images for Different Prompts" below — that bug fixed the seed *input name*; this bug fixes the *execution cache* that still caused same images even after the seed was correctly injected.  
+**Description:** Even after fixing the seed input name auto-detection (so `noise_seed` was correctly set on the `RandomNoise` node), ComfyUI still generated the same image for different prompts. The root cause was **ComfyUI's execution cache**: ComfyUI caches node outputs based on input hashes and reuses them when the same node is executed again. The ComfyUI history showed `execution_cached` messages listing node 25 (RandomNoise) as cached, meaning ComfyUI was reusing the previous noise output instead of generating new noise with the new seed.
+
+This was a regression introduced by the Docker containerization — before containerization, the app likely ran ComfyUI with cache disabled or the workflow was submitted differently. After containerization, each submission went through the API without clearing the cache.
+
+**Fix:** ✅ Added cache clearing before each prompt submission:
+
+1. **Clear ComfyUI execution cache** — Before submitting each prompt, the backend now calls ComfyUI's `/free` endpoint with `{"unload_models": false, "free_memory": true}`. This clears the execution cache, forcing ComfyUI to re-execute all nodes (including the seed node) with fresh inputs.
+
+2. **Non-fatal cache clear** — If the cache clear request fails, the submission still proceeds (logged as a warning), since the cache clear is an optimization, not a requirement.
+
+## ComfyUI Seed Node Misconfigured — Wrong Node ID (2026-06-09)
+
+### 🐛 Bug: User-configured seed_node_id pointed to BasicScheduler instead of RandomNoise
+
+**Files:** `backend/app/core/workflow_patcher.py`, `backend/tests/test_workflow_patcher.py`  
+**Severity:** High  
+**Cross-references:** See also "ComfyUI Generating Similar Images for Different Prompts" below — that bug fixed the seed *input name* auto-detection; this bug fixes auto-detection of the *seed node itself* when the user provides the wrong node ID.  
+**Description:** The user had configured `seed_node_id = 17` in ComfyUI Settings, but node 17 is a `BasicScheduler` (which has no seed widget). The actual seed node is node 25 (`RandomNoise`). The `_detect_seed_input_name()` function correctly detected that node 17 had no seed widget and fell back to `"seed"`, but this was injected into the wrong node. The real seed node (25) kept its original seed value unchanged across runs.
+
+The backend log showed: `WARNING: Could not auto-detect seed input name for node 17, falling back to 'seed'` — confirming the auto-detection was failing because the node type was wrong.
+
+**Fix:** ✅ Added seed node auto-detection from the workflow:
+
+1. **`_detect_seed_node()` function** — Scans the entire workflow for known seed-bearing node types (`RandomNoise`, `KSampler`, `KSamplerAdvanced`, `SamplerCustom`) and returns the first match's node ID.
+
+2. **Fallback in `patch_workflow()`** — If the user-provided `seed_node_id` points to a node that has no seed widget (detected by `_detect_seed_input_name()` returning `None`), the patcher now auto-detects the correct seed node from the workflow using `_detect_seed_node()`.
+
+3. **Works even without `seed_node_id`** — If no `seed_node_id` is provided at all, the patcher still auto-detects the seed node from the workflow.
+
+4. **`_detect_seed_input_name()` now returns `None`** instead of falling back to `"seed"` for unknown types — this signals that the node has no seed widget, triggering the auto-detection fallback.
+
+5. **Added tests** — `test_falls_back_to_auto_detect_when_user_node_has_no_seed` and `test_no_seed_injection_when_no_seed_node_found` verify the new behavior.
+
+## ComfyUI control_after_generate Not Set to Randomize (2026-06-09)
+
+### 🐛 Bug: ComfyUI incrementing seed instead of randomizing
+
+**Files:** `backend/app/core/workflow_patcher.py`  
+**Severity:** Medium  
+**Cross-references:** Works in conjunction with the seed input name auto-detection and execution cache fixes above.  
+**Description:** The original workflow JSON had `control_after_generate: "increment"` on the `RandomNoise` node. This tells ComfyUI to increment the seed by 1 each time the node is executed, rather than generating a truly random seed. Combined with the execution cache (see above), this meant that even when the seed was correctly injected, ComfyUI would increment it predictably rather than randomizing it.
+
+**Fix:** ✅ The patcher now injects `control_after_generate: "randomize"` alongside the seed value, overriding whatever the original workflow had set. This ensures ComfyUI generates a fresh random seed for each execution.
+
+## ComfyUI Generating Similar Images for Different Prompts (2026-06-09)
+
+### 🐛 Bug: Different prompts produce similar/same images
+
+**Files:** `backend/app/core/workflow_patcher.py`, `frontend/src/api/comfyuiSettings.js`, `backend/app/api/comfyui.py`  
+**Severity:** High  
+**Cross-references:** This was the *initial* fix for the seed input name. See also "ComfyUI Seed Node Misconfigured" (wrong node ID), "ComfyUI control_after_generate Not Set to Randomize" (increment vs randomize), and "ComfyUI Execution Cache Reusing Same Image" (the final fix for the same-image problem).  
+**Description:** When sending different prompts to ComfyUI, the generated images looked very similar or identical. The root cause was that the seed was not being properly randomized because the `RandomNoise` node uses `noise_seed` as its widget name, but the `patch_workflow` function defaulted to injecting the seed under the key `"seed"`. This meant:
+
+1. The patcher injected `{"seed": <random_value>}` into the RandomNoise node's inputs
+2. But ComfyUI reads `noise_seed` from the node's `widgets_values`, which still had the original hardcoded value
+3. The extra `"seed"` key was ignored by ComfyUI
+4. **Every generation used the same seed** → nearly identical images regardless of prompt
+
+Additionally, if `positive_node_id` or `negative_node_id` was empty (not configured), the patcher silently skipped prompt injection, causing the workflow to run with the original hardcoded prompt text.
+
+**Fix:** ✅ Three changes applied:
+
+1. **Auto-detect seed input name** — Added `_detect_seed_input_name()` function that looks up the node's `class_type` in the `_WIDGET_NAMES` mapping and returns the first widget name containing "seed" (e.g., `"noise_seed"` for `RandomNoise`, `"seed"` for `KSampler`). Falls back to `"seed"` for unknown types.
+
+2. **Updated default `seedInputName`** — Changed the frontend default from `"seed"` to `""` (empty), so the auto-detection kicks in. Updated the settings UI placeholder to show "e.g. noise_seed or seed" with a note about auto-detection.
+
+3. **Added validation for empty node IDs** — The backend submit endpoint now returns a 422 error if `positive_node_id` or `negative_node_id` is empty, instead of silently skipping prompt injection.
+
+## ComfyUI Image Not Displaying After Generation (2026-06-09)
+
+### 🐛 Bug: Images not showing in frontend after ComfyUI generation completes
+
+**File:** `frontend/src/App.jsx` (handleSendToComfyUI function)  
+**Severity:** Medium  
+**Description:** When a prompt was submitted successfully to ComfyUI and the generation completed, the generated image would not appear in the frontend. The root cause was a race condition: the WebSocket `onComplete` handler called `fetchComfyUIHistory()` immediately upon receiving the `executing` message with `node=null`, but ComfyUI may not have finished writing output metadata to its history endpoint yet. This resulted in `fetchComfyUIHistory()` returning `outputs: {}` (no images), causing the frontend to display "Generation complete!" with an empty images array.
+
+Additionally, the polling fallback had a similar issue: when `history.status === 'done'` but `outputs.images` was empty, it immediately gave up instead of retrying.
+
+A secondary issue was that `findIndex()` could return `-1` if the prompt wasn't found in the results array, and `-1 ?? 0` evaluates to `-1` (not `0`), causing `comfyUIResult.index` to never match any card index, hiding the progress section entirely.
+
+**Fix:** ✅ Three changes applied:
+
+1. **WebSocket `onComplete` handler** — Added retry logic (up to 5 attempts with 1s delay) that checks if `history.outputs?.images?.length > 0` before accepting the result. If images are not yet available, it retries after a delay. Only after all retries are exhausted does it fall back to showing "Generation complete (could not fetch images)".
+
+2. **Polling fallback** — When `history.status === 'done'` but no images are found, the poller now retries up to 5 times (with 2s delays) before giving up, instead of immediately stopping.
+
+3. **Index computation** — Changed `findIndex() ?? 0` to `Math.max(0, findIndex() ?? 0)` to ensure the index is always a valid non-negative number, preventing the progress section from being hidden due to a `-1` index.
+
+### 🐛 Bug: ComfyUI images not persisting and not showing in history
+
+**Files:** `frontend/src/App.jsx`, `frontend/src/components/PromptResults.jsx`, `frontend/src/components/PromptHistory.jsx`, `backend/app/db/database.py`, `backend/app/api/history.py`, `backend/app/api/prompts.py`, `backend/app/models/prompt.py`  
+**Severity:** Medium  
+**Description:** ComfyUI-generated images were stored only in ephemeral React state (`comfyUIProgress`), which was reset when the user started a new generation. This meant images disappeared from the UI after any state change. Additionally, the prompt history had no way to store or display ComfyUI output images, so users couldn't view previously generated images.
+
+**Fix:** ✅ Multiple changes applied:
+
+1. **Persistent `comfyUIImages` state** — Added a new `comfyUIImages` state object in `App.jsx` that stores images per prompt index. Unlike `comfyUIProgress`, this state is NOT reset when a new generation starts, so images persist across re-renders and state changes.
+
+2. **Fallback image display** — Added a secondary image display section in `PromptResults.jsx` that shows images from `comfyUIImages` when the progress section isn't actively showing progress. This ensures images are always visible even after the progress state is reset.
+
+3. **Database schema** — Added `comfyui_prompt_id` (VARCHAR) and `comfyui_images` (JSONB) columns to the `prompt_history` table. Added automatic migration in `init_db()` to add these columns to existing tables.
+
+4. **History API** — Updated `HistoryItem` Pydantic model to include `comfyui_prompt_id` and `comfyui_images` fields. Added `PUT /api/history/{id}/comfyui-images` endpoint to save ComfyUI images to a history entry.
+
+5. **Prompt generation API** — Updated `PromptPair` model to include `history_id` field. Updated `generate_prompts` endpoint to return the database ID for each generated prompt pair.
+
+6. **Frontend API client** — Added `saveComfyUIImages()` function to call the new PUT endpoint.
+
+7. **Automatic history save** — When ComfyUI generation completes (both via WebSocket and polling), the frontend now calls `saveComfyUIImages()` to persist the generated images to the corresponding history entry.
+
+8. **History display** — Updated `PromptHistory.jsx` to show ComfyUI-generated images in the expanded view when `comfyui_images` is available.
+
+### 🐛 Bug: ComfyUI images not displaying on Generate page (duplicate rendering + state loss)
+
+**Files:** `frontend/src/components/PromptResults.jsx`, `frontend/src/App.jsx`  
+**Severity:** Medium  
+**Description:** Two issues prevented ComfyUI-generated images from displaying correctly on the Generate page:
+
+1. **Duplicate image rendering** — When `comfyUIProgress.status === 'done'`, both the "done" progress block AND the persistent images block would render, showing images twice. The persistent images condition `!(comfyUIProgress && comfyUIResult && comfyUIResult.index === index && comfyUIProgress.status !== 'done')` evaluated to `true` when status was 'done', causing both blocks to render.
+
+2. **Progress state loss** — The `setComfyUIProgress(prev => prev ? { ...prev, ... } : null)` pattern used in multiple places would set progress to `null` if `prev` was somehow null (e.g., due to a React state batching issue or component unmount/remount). This caused the progress to be lost entirely, and since the persistent images block checked `comfyUIProgress` state, images could disappear.
+
+**Fix:** ✅ Two changes applied:
+
+1. **Fixed persistent images condition** — Changed the condition from `!(comfyUIProgress && comfyUIResult && comfyUIResult.index === index && comfyUIProgress.status !== 'done')` to `!(comfyUIProgress && comfyUIResult && comfyUIResult.index === index)`. This means persistent images are hidden ONLY when progress is actively showing for this specific variation (regardless of status), preventing duplicate rendering.
+
+2. **Fixed progress state loss** — Changed all `setComfyUIProgress(prev => prev ? { ...prev, ... } : null)` patterns to create a full progress object instead of `null` when `prev` is null. This ensures that even if the previous state is lost, the progress state is properly initialized with all required fields.
+
+### 🐛 Bug: ComfyUI images not showing on Generate page after page refresh
+
+**Files:** `backend/app/models/prompt.py`, `backend/app/api/prompts.py`, `frontend/src/App.jsx`  
+**Severity:** Low  
+**Description:** ComfyUI-generated images were stored in React state (`comfyUIImages`) which was lost on page refresh or navigation. While images appeared in the History page (loaded from the database), they didn't appear on the Generate page after a refresh because the in-memory state was reset.
+
+**Fix:** ✅ Three changes applied:
+
+1. **Added `comfyui_images` field to `PromptPair` model** — The prompt generation API response now includes any previously saved ComfyUI images for each prompt pair, loaded from the database.
+
+2. **Populated `comfyui_images` from database** — When generating prompts, the backend now checks if the history entry has `comfyui_images` and includes them in the response.
+
+3. **Frontend loads images from API response** — When prompts are generated, the frontend now populates `comfyUIImages` state from any `comfyui_images` in the response, so previously generated images appear immediately without needing to re-send to ComfyUI.
+
+### 🐛 Bug: ComfyUI images not showing on Generate page (disconnected status + ephemeral keying)
+
+**Files:** `frontend/src/App.jsx`, `frontend/src/components/PromptResults.jsx`  
+**Severity:** High  
+**Description:** Two issues prevented ComfyUI-generated images from displaying on the Generate page:
+
+1. **WebSocket `disconnected` status overwriting `done` status** — When ComfyUI generation completed, the WebSocket's `onComplete` handler set `comfyUIProgress.status = 'done'`. However, immediately after, the WebSocket's `onclose` handler fired and called `onStatusChange('disconnected')`, which overwrote the progress status to `'disconnected'`. Since the `PromptResults` component only rendered UI for known statuses (`connecting`, `connected`, `generating`, `polling`, `fetching`, `done`, `error`), the `'disconnected'` status resulted in an empty progress block. This also caused the persistent images block to be hidden (because `comfyUIProgress` was truthy and `comfyUIResult.index === index`), so no images were shown at all.
+
+2. **Ephemeral keying by prompt index** — `comfyUIImages` was keyed by prompt index (0, 1, 2...) which is lost on page refresh. When the user refreshed the page, the React state was reset and the images disappeared even though they were stored in the database.
+
+**Fix:** ✅ Multiple changes applied:
+
+1. **Prevent status overwrite** — Updated the `ws.onStatusChange` handler to not overwrite `'done'`, `'error'`, or `'fetching'` statuses with connection status changes. This prevents the WebSocket disconnect from overwriting the completion status.
+
+2. **Added `'disconnected'` status handler** — Added a fallback UI in `PromptResults.jsx` for the `'disconnected'` status, showing a warning message and ensuring persistent images are displayed.
+
+3. **Changed keying from index to history_id** — `comfyUIImages` is now keyed by `history_id` (stable database ID) instead of prompt index. This makes images persist across page refreshes and different prompt generations.
+
+4. **localStorage persistence** — `comfyUIImages` is now saved to `localStorage` on every change and loaded on startup, so images survive page refreshes.
+
+5. **History API loading on startup** — On page load, the app fetches recent history entries with ComfyUI images and populates `comfyUIImages`, so images appear even after a full page refresh.
+
+6. **Reset progress on new generation** — `handleGenerate` now resets `comfyUIResult` and `comfyUIProgress` to `null` when generating new prompts, preventing stale progress state from showing.
+
+7. **Updated persistent images condition** — The persistent images block now shows when progress is in a terminal state (`error` or `disconnected`) for the current variation, ensuring images are always visible even if the progress state gets stuck.
+
+---
+
+## Dynamic Code Review — WebSocket Proxy & App (2026-06-07)
+
+### ✅ All dynamic tests passed
+
+| # | Test | Result |
+|---|------|--------|
+| 1 | API health check | ✅ 200 OK |
+| 2 | ComfyUI connection (default URL) | ✅ Connected to host.docker.internal:8188 |
+| 3 | ComfyUI connection (explicit URL) | ✅ Connected |
+| 4 | WebSocket proxy — valid connection | ✅ Connected, received status message |
+| 5 | WebSocket SSRF — private IP (10.0.0.1) | ✅ Blocked with code 4004 |
+| 6 | WebSocket SSRF — cloud metadata (169.254.169.254) | ✅ Blocked with code 4004 |
+| 7 | WebSocket — missing clientId | ✅ Blocked with code 4004 |
+| 8 | WebSocket — allowed host (host.docker.internal) | ✅ Connected, received status |
+| 9 | clientId URL encoding — special chars | ✅ `test&evil=val` properly encoded, not split |
+| 10 | Image proxy — path traversal in filename | ✅ Blocked: "Invalid filename" |
+| 11 | Image proxy — path traversal in subfolder | ✅ Blocked: "Invalid subfolder" |
+| 12 | Image proxy — invalid type | ✅ Blocked: "Invalid type" |
+| 13 | Image proxy — SSRF private IP | ✅ Blocked: "private IP not allowed" |
+| 14 | Content-Disposition sanitization | ✅ All 8 test cases pass |
+| 15 | Workflow validation | ✅ Valid workflow passes |
+| 16 | Client ID generation | ✅ Returns UUID v4 |
+| 17 | Frontend serves correctly | ✅ 200 OK, JS bundle loads |
+| 18 | API attributes endpoint | ✅ Returns 11 categories |
+| 19 | Fuzz test (89 cases) | ✅ 0 HIGH, 0 MEDIUM, 3 LOW |
+| 20 | Backend unit tests (689) | ✅ All pass |
+
+**Note on WebSocket SSRF:** The WebSocket proxy accepts the connection first (HTTP upgrade), then validates the server URL. If validation fails, it closes the WebSocket with code 4004 and the SSRF error message. This is the expected behavior — WebSocket connections must be accepted before they can be closed with a reason code. The browser's `WebSocket.onclose` handler receives the close code and reason.
+
+---
+
+## Static Code Review — WebSocket Proxy & App (2026-06-07)
+
+### 🔴 HIGH — WebSocket SSRF bypass via DNS rebinding
+
+**File:** `backend/app/api/comfyui.py` (line ~920)  
+**Severity:** High  
+**Description:** The WebSocket proxy endpoint validates the `server_url` using `_validate_server_url()` which resolves DNS and checks IPs at validation time. However, `websockets.connect()` resolves DNS independently at connection time, creating a DNS rebinding window. An attacker could point a domain to a safe IP during validation, then switch to a private IP for the actual WebSocket connection. The HTTP endpoints are protected by `_SSRFSafeTransport` which validates at connection time, but the WebSocket proxy bypasses this.  
+**Fix:** ✅ Added connection-time IP validation for WebSocket connections. After `websockets.connect()` establishes the TCP connection, the hostname is re-resolved and checked against `_is_private_ip()`. If the resolved IP is private and the hostname is not in `_ALLOWED_HOSTS`, the connection is closed with code 4403 (SSRF blocked). Also added `open_timeout=10`, `close_timeout=5`, and `max_size=1MB` to `websockets.connect()`.
+
+### 🟡 MEDIUM — `clientId` not URL-encoded in WebSocket URL
+
+**File:** `backend/app/api/comfyui.py` (line ~925)  
+**Severity:** Medium  
+**Description:** The `clientId` query parameter was injected directly into the WebSocket URL without URL-encoding: `f"{ws_url}/ws?clientId={client_id}"`. If `clientId` contained special characters like `&`, `#`, or `=`, it could inject additional query parameters into the ComfyUI WebSocket URL.  
+**Fix:** ✅ Now uses `urllib.parse.quote(client_id, safe='')` when constructing the WebSocket URL.
+
+### 🟡 MEDIUM — No timeout on WebSocket proxy connections
+
+**File:** `backend/app/api/comfyui.py` (line ~930)  
+**Severity:** Medium  
+**Description:** The `websockets.connect()` call had no timeout or idle timeout. A WebSocket connection that never closes (e.g., ComfyUI stops responding) would remain open indefinitely, consuming server resources.  
+**Fix:** ✅ Added `open_timeout=10` (10s connection timeout) and `close_timeout=5` (5s close timeout) to `websockets.connect()`.
+
+### 🟡 MEDIUM — No message size limit on WebSocket forwarding
+
+**File:** `backend/app/api/comfyui.py` (line ~940-955)  
+**Severity:** Medium  
+**Description:** The WebSocket proxy forwarded messages between the browser and ComfyUI without any size limit. A malicious client could send extremely large messages to exhaust server memory.  
+**Fix:** ✅ Added `max_size=1_000_000` (1MB) to `websockets.connect()` and a size check before forwarding messages from the browser (messages >1MB are dropped with a warning log).
+
+### 🟡 MEDIUM — `Content-Disposition` header injection via `filename`
+
+**File:** `backend/app/api/comfyui.py` (line ~858)  
+**Severity:** Medium  
+**Description:** The `filename` parameter in the image proxy endpoint was inserted directly into the `Content-Disposition` header: `f'inline; filename="{filename}"'`. While `filename` is validated against path traversal (`..`, `/`, `\`), it could still contain double-quote characters (`"`) which would break the header format.  
+**Fix:** ✅ Now sanitizes `filename` by removing quotes and control characters before inserting into the header. Falls back to `"image"` if the result is empty.
+
+### 🟡 MEDIUM — Polling fallback has no maximum retry limit
+
+**File:** `frontend/src/App.jsx` (line ~284-310)  
+**Severity:** Medium  
+**Description:** When the WebSocket connection fails, the app falls back to polling `fetchComfyUIHistory()` every 3 seconds. However, there was no maximum retry count or timeout — if ComfyUI is down or the history never becomes available, polling continues indefinitely.  
+**Fix:** ✅ Added `MAX_POLL_ATTEMPTS = 40` (40 × 3s = ~2 minutes max). After 40 attempts, polling stops and shows an error message "Generation timed out."
+
+### 🟢 LOW — `_SSRFSafeTransport` creates new transport per request
+
+**File:** `backend/app/api/comfyui.py` (line ~240)  
+**Severity:** Low  
+**Description:** Each call to `_create_safe_client()` creates a new `httpx.AsyncHTTPTransport` instance inside `_SSRFSafeTransport`. While this works correctly, it means every HTTP request to ComfyUI creates a new transport and connection pool. For high-frequency usage, this could be optimized by reusing the transport.  
+**Fix:** ⬜ Consider using a shared transport instance or connection pool for better performance.
+
+### 🟢 LOW — `_is_private_ip` performs DNS resolution on every call
+
+**File:** `backend/app/api/comfyui.py` (line ~130-145)  
+**Severity:** Low  
+**Description:** `_is_private_ip()` calls `socket.getaddrinfo()` for each hostname in `_ALLOWED_HOSTS` on every invocation. For frequent requests, this could be optimized with a short-lived DNS cache (e.g., 30-second TTL).  
+**Fix:** ⬜ Consider caching resolved IPs for `_ALLOWED_HOSTS` with a short TTL.
+
+### 🟢 LOW — Fallback `Math.random()` is not cryptographically secure
+
+**File:** `frontend/src/api/comfyuiWs.js` (line ~170)  
+**Severity:** Low  
+**Description:** The `fetchClientId()` fallback uses `Math.random()` when `crypto.randomUUID()` is unavailable. `Math.random()` is not cryptographically secure, but client IDs are used for WebSocket routing, not security, so this is acceptable.  
+**Fix:** ⬜ No fix needed — acceptable for the use case.
+
+### 🟢 LOW — `handleSendToComfyUI` has unstable dependency array
+
+**File:** `frontend/src/App.jsx` (line ~170)  
+**Severity:** Low  
+**Description:** The `handleSendToComfyUI` callback depends on `results` in its closure (used to find the index of the current item), but `results` is not listed in the dependency array of `useCallback`. This means if `results` changes between renders, the callback may use stale data.  
+**Fix:** ⬜ Consider using a ref for `results` or adding it to the dependency array.
+
+---
+
+## Generated Images Not Displaying After ComfyUI Generation (2026-06-07)
+
+### 🔴 HIGH — Images don't show after ComfyUI generation, only success message
+
+**File:** `frontend/src/api/comfyuiWs.js`, `backend/app/api/comfyui.py`, `frontend/nginx.conf`  
+**Severity:** High  
+**Description:** When running in Docker, the browser cannot directly connect to ComfyUI's WebSocket endpoint. The `ComfyUIWebSocket` class was connecting directly to `ws://<serverUrl>/ws?clientId=...`, but the browser can't reach `host.docker.internal:8188` — only the nginx proxy on port 8080. When the WebSocket connection failed, the polling fallback also used `settings.serverUrl` directly, which the browser also couldn't reach. This meant the app showed "✅ Sent to ComfyUI!" but never progressed to showing the generated images.  
+**Fix:** ✅ Three changes applied:
+1. **Backend**: Added WebSocket proxy endpoint at `/api/comfyui/ws` that forwards browser WS connections to ComfyUI. Uses the existing SSRF-safe HTTP client for URL validation. Added `websockets` dependency.
+2. **Nginx**: Added dedicated `/api/comfyui/ws` location block with WebSocket upgrade headers (`Upgrade`, `Connection`, 300s timeouts).
+3. **Frontend**: Updated `ComfyUIWebSocket` class to connect through the backend proxy (`ws://<host>/api/comfyui/ws?clientId=xxx&server_url=xxx`) instead of directly to ComfyUI. Swapped constructor parameters to `(clientId, serverUrl)` for clarity since serverUrl is now optional.
+
 ## ComfyUI Connection Failure from Docker (2026-06-07)
 
 ### 🔴 HIGH — ComfyUI test-connection returns 400 "private IP not allowed" from remote browser
@@ -84,6 +533,150 @@
 **Severity:** Low  
 **Description:** The line `RUN rm -f /etc/nginx/conf.d/default.conf.bak` removes a file that doesn't exist in the `nginx:alpine` image. This is harmless but unnecessary.  
 **Fix:** ✅ Removed the unnecessary line.
+
+---
+
+## WebSocket Proxy & Security Review (2026-06-07)
+
+### 🔴 HIGH — WebSocket SSRF bypass via DNS rebinding
+
+**File:** `backend/app/api/comfyui.py` (lines ~920-925)  
+**Severity:** High  
+**Description:** The WebSocket proxy endpoint validates the ComfyUI server URL using `_validate_server_url()` (DNS-time check only), but then connects via the `websockets` library which resolves DNS again independently. This creates a DNS rebinding window: an attacker could configure DNS to return a public IP on the first resolution (passing validation) and a private IP on the second (when `websockets.connect()` resolves), bypassing all SSRF protection. The `_SSRFSafeTransport` used for HTTP requests validates IPs at connection time, but the WebSocket path has no equivalent protection.  
+**Fix:** ⬜ Resolve hostname and validate IPs at WebSocket connection time, similar to `_SSRFSafeTransport`. Use `socket.getaddrinfo()` to resolve and check IPs before calling `websockets.connect()`, or use a custom DNS resolver.
+
+### 🔴 HIGH — No authentication/rate-limiting on WebSocket proxy
+
+**File:** `backend/app/api/comfyui.py` (lines ~895-960)  
+**Severity:** High  
+**Description:** The `/api/comfyui/ws` WebSocket proxy endpoint has no authentication, authorization, or rate limiting. Any client that can reach the backend can open unlimited concurrent WebSocket connections to any allowed ComfyUI server. This enables resource exhaustion (DoS) and unauthorized use of ComfyUI.  
+**Fix:** ⬜ Add rate limiting per client IP on WebSocket connections. Consider adding session-based authentication.
+
+### 🔴 HIGH — `clientId` not URL-encoded before WebSocket URL injection
+
+**File:** `backend/app/api/comfyui.py` (line ~920)  
+**Severity:** High  
+**Description:** The `clientId` query parameter is injected directly into the WebSocket URL without URL-encoding: `ws_url = f"{ws_url}/ws?clientId={client_id}"`. A malicious `clientId` containing `&`, `#`, or other special characters could inject additional query parameters or fragment identifiers into the ComfyUI WebSocket URL, potentially causing unexpected behavior.  
+**Fix:** ⬜ Use `urllib.parse.quote(client_id, safe='')` before embedding in the URL.
+
+### 🔴 HIGH — Chunked request body fully buffered in memory (DoS vector)
+
+**File:** `backend/app/main.py` (lines ~68-76)  
+**Severity:** High  
+**Description:** The `limit_request_body_size` middleware reads the entire body into memory for chunked/streaming requests without a `Content-Length` header before checking the size: `body = await request.body()`. An attacker can send a multi-gigabyte streaming request that gets fully buffered in memory before being rejected, causing memory exhaustion and DoS.  
+**Fix:** ⬜ Use a streaming body size checker that reads chunks incrementally and aborts when the limit is exceeded, or use Starlette's built-in request body size limiting.
+
+### 🟡 MEDIUM — Internal error details leaked in WebSocket close reason
+
+**File:** `backend/app/api/comfyui.py` (line ~956)  
+**Severity:** Medium  
+**Description:** The WebSocket proxy sends raw exception messages to the client in the close reason: `reason=f"ComfyUI connection error: {str(exc)[:100]}"`. This could leak internal server details like IP addresses, file paths, or stack traces.  
+**Fix:** ⬜ Send a generic error message to the client and log the detailed error server-side only.
+
+### 🟡 MEDIUM — No timeout on WebSocket proxy connections
+
+**File:** `backend/app/api/comfyui.py` (lines ~925-960)  
+**Severity:** Medium  
+**Description:** The `websockets.connect()` call has no timeout, and the proxy tasks run indefinitely. A malicious or buggy client could hold a connection open forever, consuming server resources (file descriptors, memory).  
+**Fix:** ⬜ Add `open_timeout` and `close_timeout` to `websockets.connect()`, and implement an idle timeout that closes connections after N minutes of inactivity.
+
+### 🟡 MEDIUM — No message size limit on WebSocket forwarding
+
+**File:** `backend/app/api/comfyui.py` (lines ~930-945)  
+**Severity:** Medium  
+**Description:** Neither direction of the WebSocket proxy enforces a maximum message size. A client could send extremely large messages through the proxy, causing memory exhaustion.  
+**Fix:** ⬜ Add `max_size` parameter to `websockets.connect()` and validate incoming browser WebSocket message sizes.
+
+### 🟡 MEDIUM — `Content-Disposition` header injection via `filename`
+
+**File:** `backend/app/api/comfyui.py` (line ~858)  
+**Severity:** Medium  
+**Description:** The `filename` query parameter is validated for `..`, `/`, and `\\` but not for `"` (double quote) or CR/LF characters. A filename like `foo"bar\r\nEvil-Header: injected` could inject headers into the HTTP response (HTTP response splitting).  
+**Fix:** ⬜ Sanitize `filename` by stripping or rejecting CR/LF characters and escaping double quotes, or use RFC 6266 `filename*=UTF-8''` encoding.
+
+### 🟡 MEDIUM — Reconnection logic can create duplicate WebSocket connections
+
+**File:** `frontend/src/api/comfyuiWs.js` (lines ~73-78)  
+**Severity:** Medium  
+**Description:** If `connect()` is called while a reconnection attempt is pending from `onclose`, the old WebSocket's `onclose` handler can fire and create a second connection. The `connect()` method checks `this.ws.readyState` but the old ws reference may have been replaced by the new call.  
+**Fix:** ⬜ Clear old WebSocket event handlers before creating a new one, or use a flag to track reconnection state.
+
+### 🟡 MEDIUM — No timeout on `connect()` Promise
+
+**File:** `frontend/src/api/comfyuiWs.js` (lines ~48-82)  
+**Severity:** Medium  
+**Description:** The `connect()` method returns a Promise that resolves on `onopen` and rejects on `onerror`, but if neither fires (e.g., server doesn't respond), the Promise hangs forever.  
+**Fix:** ⬜ Add a connection timeout (e.g., 10 seconds) that rejects the Promise.
+
+### 🟡 MEDIUM — Polling fallback has no maximum retry limit
+
+**File:** `frontend/src/App.jsx` (lines ~210-230)  
+**Severity:** Medium  
+**Description:** The polling fallback in `handleSendToComfyUI` retries every 3 seconds indefinitely. The comment says "up to ~2 minutes" but there's no actual limit. A stuck or slow ComfyUI could cause the browser to poll forever.  
+**Fix:** ⬜ Add a maximum number of poll attempts (e.g., 40 attempts = ~2 minutes) and stop polling after that.
+
+### 🟡 MEDIUM — Race condition: old `onComplete` can overwrite new progress state
+
+**File:** `frontend/src/App.jsx` (line ~200)  
+**Severity:** Medium  
+**Description:** If the user triggers a new ComfyUI submission while a previous WebSocket is still active, the old `onComplete` callback still fires and calls `fetchComfyUIHistory` with the old `promptId`, potentially overwriting the new progress state.  
+**Fix:** ⬜ Add a generation counter or check that `promptId` matches the current generation before updating state.
+
+### 🟡 MEDIUM — `buildComfyUIImageUrl` doesn't validate `imageInfo` fields
+
+**File:** `frontend/src/api/client.js` (lines ~265-275)  
+**Severity:** Medium  
+**Description:** If `imageInfo.filename` is `undefined` or `null`, `URLSearchParams` converts it to the string `"null"` or `"undefined"`, resulting in malformed URLs. Also, `imageInfo` itself could be `null`/`undefined`, causing a runtime error.  
+**Fix:** ⬜ Add defensive checks for `imageInfo` and its properties before building the URL.
+
+### 🟡 MEDIUM — Middleware may interfere with WebSocket connections
+
+**File:** `backend/app/main.py` (lines ~55-76)  
+**Severity:** Medium  
+**Description:** The `limit_request_body_size` middleware runs on all HTTP requests including WebSocket upgrade requests. While WebSocket upgrade requests typically have small bodies, the middleware adds unnecessary overhead and the `await request.body()` call on chunked requests could theoretically interfere with WebSocket connections.  
+**Fix:** ⬜ Add a path check to skip the middleware for WebSocket upgrade paths (e.g., `/api/comfyui/ws`), or check for the `Upgrade: websocket` header.
+
+### 🟢 LOW — `_SSRFSafeTransport` creates new transport per request
+
+**File:** `backend/app/api/comfyui.py` (line ~195)  
+**Severity:** Low  
+**Description:** Each call to `_SSRFSafeTransport.handle_async_request()` creates a new `httpx.AsyncHTTPTransport()` instance, which means new connection pools are created per request. This is inefficient and could lead to connection exhaustion under load.  
+**Fix:** ⬜ Create a single `AsyncHTTPTransport` instance and reuse it.
+
+### 🟢 LOW — `_is_private_ip` performs DNS resolution on every call
+
+**File:** `backend/app/api/comfyui.py` (lines ~100-110)  
+**Severity:** Low  
+**Description:** The `_is_private_ip` function calls `socket.getaddrinfo()` for every host in `_ALLOWED_HOSTS` on every request. This is inefficient and could be a minor DoS vector if DNS is slow.  
+**Fix:** ⬜ Cache resolved IPs for `_ALLOWED_HOSTS` with a TTL.
+
+### 🟢 LOW — Fallback `Math.random()` is not cryptographically secure
+
+**File:** `frontend/src/api/comfyuiWs.js` (line ~155)  
+**Severity:** Low  
+**Description:** The `fetchClientId()` fallback uses `Math.random()` which is predictable. While `crypto.randomUUID()` is preferred and available in modern browsers, the fallback could produce guessable client IDs.  
+**Fix:** ⬜ Use `crypto.getRandomValues()` for the fallback instead of `Math.random()`.
+
+### 🟢 LOW — Duplicate `fetchComfyUIHistory` and `buildComfyUIImageUrl` functions
+
+**File:** `frontend/src/api/client.js` + `frontend/src/api/comfyuiWs.js`  
+**Severity:** Low  
+**Description:** Both `fetchComfyUIHistory` and `buildComfyUIImageUrl` are defined in both `client.js` and `comfyuiWs.js` with slightly different error handling. This duplication can lead to inconsistent behavior and maintenance burden.  
+**Fix:** ⬜ Export from a single location (`client.js`) and import in `comfyuiWs.js`.
+
+### 🟢 LOW — `handleSendToComfyUI` has unstable dependency array
+
+**File:** `frontend/src/App.jsx` (line ~237)  
+**Severity:** Low  
+**Description:** The `useCallback` dependency array includes `results`, which changes on every generation. This causes the function to be recreated frequently, potentially causing unnecessary re-renders in child components.  
+**Fix:** ⬜ Use a ref for `results` to stabilize the callback, or extract submission logic into a custom hook.
+
+### 🟢 LOW — CORS allows all methods and headers
+
+**File:** `backend/app/main.py` (lines ~49-54)  
+**Severity:** Low  
+**Description:** The CORS configuration uses `allow_methods=["*"]` and `allow_headers=["*"]`, which is overly permissive. While `allow_origins` is restricted, allowing all methods and headers could enable unexpected HTTP methods or custom headers.  
+**Fix:** ⬜ Restrict to only the methods and headers actually used by the application (GET, POST, PUT, DELETE, OPTIONS).
 
 ---
 

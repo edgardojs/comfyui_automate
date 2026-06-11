@@ -42,6 +42,16 @@ class HistoryItem(BaseModel):
     created_at: str = Field(
         ..., description="ISO 8601 timestamp when the generation was created"
     )
+    comfyui_prompt_id: str | None = Field(
+        default=None, description="ComfyUI prompt ID if this entry was sent to ComfyUI"
+    )
+    comfyui_images: list[dict] | None = Field(
+        default=None,
+        description=(
+            "ComfyUI output images if available. Each image has "
+            "filename, subfolder, type, and url fields."
+        ),
+    )
 
 
 class HistoryListResponse(BaseModel):
@@ -70,6 +80,8 @@ def _row_to_history_item(row: PromptHistoryRow) -> HistoryItem:
         negative_profile_id=row.negative_profile_id,  # type: ignore[arg-type]
         is_favorite=bool(row.is_favorite),  # type: ignore[arg-type]
         created_at=row.created_at.isoformat(),  # type: ignore[union-attr]
+        comfyui_prompt_id=row.comfyui_prompt_id,  # type: ignore[arg-type]
+        comfyui_images=row.comfyui_images,  # type: ignore[arg-type]
     )
 
 
@@ -166,4 +178,78 @@ async def toggle_favorite(
     return FavoriteResponse(
         generation_id=generation_id,
         is_favorite=bool(new_favorite),
+    )
+
+
+# ---------------------------------------------------------------------------
+# PUT /api/history/{id}/comfyui-images — Save ComfyUI images to history
+# ---------------------------------------------------------------------------
+
+
+class ComfyUIImagesRequest(BaseModel):
+    """Request to save ComfyUI output images to a history entry."""
+
+    comfyui_prompt_id: str | None = Field(
+        default=None, description="ComfyUI prompt ID"
+    )
+    comfyui_images: list[dict] = Field(
+        default_factory=list,
+        description=(
+            "List of ComfyUI output images. Each image should have "
+            "filename, subfolder, type, and url fields."
+        ),
+    )
+
+
+class ComfyUIImagesResponse(BaseModel):
+    """Response after saving ComfyUI images to a history entry."""
+
+    id: int = Field(..., description="The history entry ID")
+    generation_id: str = Field(..., description="The generation batch ID")
+    comfyui_prompt_id: str | None = Field(
+        default=None, description="ComfyUI prompt ID"
+    )
+    comfyui_images: list[dict] | None = Field(
+        default=None, description="ComfyUI output images"
+    )
+
+
+@router.put(
+    "/{id}/comfyui-images",
+    response_model=ComfyUIImagesResponse,
+    summary="Save ComfyUI images to a history entry",
+    description=(
+        "Update a prompt history entry with ComfyUI output images "
+        "and the ComfyUI prompt ID. This allows the frontend to "
+        "persist generated image references for later viewing."
+    ),
+    responses={404: {"description": "History entry not found"}},
+)
+async def save_comfyui_images(
+    id: int,
+    request: ComfyUIImagesRequest,
+    session: AsyncSession = Depends(get_session),
+) -> ComfyUIImagesResponse:
+    """Save ComfyUI output images to a history entry."""
+    result = await session.execute(
+        select(PromptHistoryRow).where(PromptHistoryRow.id == id)
+    )
+    row = result.scalar_one_or_none()
+
+    if not row:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"History entry {id} not found",
+        )
+
+    row.comfyui_prompt_id = request.comfyui_prompt_id  # type: ignore[assignment]
+    row.comfyui_images = request.comfyui_images  # type: ignore[assignment]
+    await session.commit()
+    await session.refresh(row)
+
+    return ComfyUIImagesResponse(
+        id=row.id,  # type: ignore[arg-type]
+        generation_id=row.generation_id,  # type: ignore[arg-type]
+        comfyui_prompt_id=row.comfyui_prompt_id,  # type: ignore[arg-type]
+        comfyui_images=row.comfyui_images,  # type: ignore[arg-type]
     )

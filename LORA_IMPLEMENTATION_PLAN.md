@@ -481,10 +481,10 @@ This means the module works even when ComfyUI is not running — you can create 
 - [x] LoRA metadata display (trigger token, recommended strength, etc.)
 - [x] Preview images grid
 - [x] "Export to ComfyUI" button
-- [ ] "Download LoRA" button
+- [x] "Download LoRA" button
 - [x] "Generate ComfyUI Workflow" button
-- [ ] Version history list
-- [ ] "Delete LoRA" action with confirmation
+- [x] Version history list
+- [x] "Delete LoRA" action with confirmation
 
 ---
 

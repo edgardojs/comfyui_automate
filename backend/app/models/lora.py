@@ -21,12 +21,26 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class LoRAJobStatus(str, Enum):
-    """Status of a LoRA training job."""
+    """Status of a LoRA training job.
+
+    State machine:
+        pending  → running     (start)
+        running  → completed   (training succeeds)
+        running  → failed      (training error)
+        running  → cancelled   (user cancel)
+        failed   → pending     (retry)
+        cancelled → pending    (retry)
+
+    Invalid transitions are rejected with 409 Conflict.
+    Idempotent transitions (re-applying the current state) return the
+    current job status without error.
+    """
 
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 # ---------------------------------------------------------------------------
@@ -377,3 +391,37 @@ class ListPreviewsResponse(BaseModel):
     character_id: str
     previews: list[PreviewFile]
     total: int
+
+
+class LoRAVersionInfo(BaseModel):
+    """Information about a single versioned LoRA file."""
+
+    version: int = Field(..., description="Version number")
+    filename: str = Field(..., description="Filename of the versioned LoRA")
+    size: int = Field(..., description="File size in bytes")
+    created_at: str | None = Field(
+        default=None, description="Creation timestamp (ISO 8601)"
+    )
+    metadata: dict[str, Any] | None = Field(
+        default=None, description="LoRA metadata if available"
+    )
+
+
+class LoRAVersionListResponse(BaseModel):
+    """Response model for GET /api/lora/jobs/{job_id}/versions."""
+
+    job_id: str
+    character_id: str
+    versions: list[LoRAVersionInfo]
+    total: int
+
+
+class LoRAJobDeleteResponse(BaseModel):
+    """Response model for DELETE /api/lora/jobs/{job_id}."""
+
+    job_id: str
+    character_id: str
+    deleted_files: list[str] = Field(
+        default_factory=list,
+        description="List of file paths that were removed",
+    )

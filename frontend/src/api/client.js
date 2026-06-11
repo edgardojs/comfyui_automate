@@ -208,6 +208,34 @@ export async function favoriteHistoryItem(id) {
 }
 
 /**
+ * Save ComfyUI output images to a history entry.
+ * @param {number} id - The history entry ID
+ * @param {object} params
+ * @param {string|null} params.comfyuiPromptId - ComfyUI prompt ID
+ * @param {Array} params.comfyuiImages - List of image objects with filename, subfolder, type, url
+ * @returns {Promise<object>} Updated history entry
+ */
+export async function saveComfyUIImages(id, { comfyuiPromptId, comfyuiImages }) {
+  const res = await fetchWithTimeout(`${API_BASE}/history/${id}/comfyui-images`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      comfyui_prompt_id: comfyuiPromptId ?? null,
+      comfyui_images: comfyuiImages ?? [],
+    }),
+  });
+  if (!res.ok) {
+    let detail = `Failed to save ComfyUI images: ${res.status}`;
+    try {
+      const errBody = await res.json();
+      if (errBody.detail) detail = errBody.detail;
+    } catch { /* ignore */ }
+    throw new Error(detail);
+  }
+  return safeJson(res);
+}
+
+/**
  * Health check.
  * @returns {Promise<object>} Health status
  */
@@ -877,6 +905,64 @@ export async function fetchWorkflowTemplate(characterId, options = {}) {
     : `${API_BASE}/lora/workflow-template/${encodeURIComponent(characterId)}`
   const res = await fetchWithTimeout(url)
   if (!res.ok) throw new Error(`Failed to fetch workflow template: ${res.status}`)
+  return safeJson(res)
+}
+
+// ---------------------------------------------------------------------------
+// LoRA Job Management API
+// ---------------------------------------------------------------------------
+
+/**
+ * Get the download URL for a trained LoRA file.
+ * This returns a URL string (not a fetch) because the browser handles
+ * the download natively via an <a> tag or window.open.
+ * @param {string} jobId - The LoRA job ID
+ * @returns {string} The download URL
+ */
+export function getLoRADownloadUrl(jobId) {
+  return `${API_BASE}/lora/jobs/${encodeURIComponent(jobId)}/download`
+}
+
+/**
+ * Fetch version history for a LoRA job.
+ * Returns a list of versioned LoRA files with metadata.
+ * @param {string} jobId - The LoRA job ID
+ * @returns {Promise<object>} Version list response with versions array
+ */
+export async function fetchLoRAVersions(jobId) {
+  const res = await fetchWithTimeout(
+    `${API_BASE}/lora/jobs/${encodeURIComponent(jobId)}/versions`,
+  )
+  if (!res.ok) {
+    let detail = `Failed to fetch LoRA versions: ${res.status}`
+    try {
+      const errBody = await res.json()
+      if (errBody.detail) detail = errBody.detail
+    } catch { /* ignore */ }
+    throw new Error(detail)
+  }
+  return safeJson(res)
+}
+
+/**
+ * Delete a LoRA training job and its associated files.
+ * Only completed, failed, or cancelled jobs can be deleted.
+ * @param {string} jobId - The LoRA job ID to delete
+ * @returns {Promise<object>} Deletion result with job_id and deleted_files
+ */
+export async function deleteLoRAJob(jobId) {
+  const res = await fetchWithTimeout(
+    `${API_BASE}/lora/jobs/${encodeURIComponent(jobId)}`,
+    { method: 'DELETE' },
+  )
+  if (!res.ok) {
+    let detail = `Failed to delete LoRA job: ${res.status}`
+    try {
+      const errBody = await res.json()
+      if (errBody.detail) detail = errBody.detail
+    } catch { /* ignore */ }
+    throw new Error(detail)
+  }
   return safeJson(res)
 }
 

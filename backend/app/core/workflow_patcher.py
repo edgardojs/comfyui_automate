@@ -170,6 +170,210 @@ def ui_to_api_workflow(ui_workflow: dict[str, Any]) -> dict[str, Any]:
     return api_workflow
 
 
+# Node types that contain a seed widget, in order of preference.
+_SEED_NODE_TYPES = ["RandomNoise", "KSampler", "KSamplerAdvanced", "SamplerCustom"]
+
+# Node types that encode text prompts, in order of preference.
+# CLIPTextEncode is the standard prompt node in most workflows.
+_PROMPT_NODE_TYPES = ["CLIPTextEncode"]
+
+
+def _get_node_class_type(workflow: dict[str, Any], node_id: str) -> str | None:
+    """Get the class_type of a node by its ID.
+
+    Works with both API-format (nodes keyed by ID) and UI-format
+    (nodes in a list) workflows.
+
+    Args:
+        workflow: The workflow dict.
+        node_id: The node ID string.
+
+    Returns:
+        The class_type string, or ``None`` if the node is not found.
+    """
+    # API-format
+    if node_id in workflow:
+        node = workflow[node_id]
+        if isinstance(node, dict):
+            return node.get("class_type")
+    # UI-format
+    if "nodes" in workflow:
+        for node in workflow.get("nodes", []):
+            if str(node.get("id")) == node_id:
+                return node.get("type")
+    return None
+
+
+def _detect_prompt_nodes(workflow: dict[str, Any]) -> tuple[str | None, str | None]:
+    """Auto-detect positive and negative prompt node IDs from the workflow.
+
+    Scans all CLIPTextEncode nodes and identifies the positive and negative
+    prompt nodes based on their titles. Falls back to positional heuristics
+    if titles are not available.
+
+    The detection strategy:
+    1. Look for nodes with "positive" or "negative" in their title (case-insensitive)
+    2. If only one prompt node is found by title, use positional heuristics
+       for the other (first CLIPTextEncode = positive, second = negative)
+    3. If no titles match, use positional heuristics for both
+
+    Args:
+        workflow: The workflow dict (API or UI format).
+
+    Returns:
+        A tuple of (positive_node_id, negative_node_id). Either may be ``None``
+        if the corresponding node cannot be found.
+    """
+    positive_id = None
+    negative_id = None
+
+    # Collect all CLIPTextEncode nodes with their IDs and titles
+    prompt_nodes = []
+
+    # API-format: nodes are keyed by ID directly
+    if not ("nodes" in workflow and isinstance(workflow.get("nodes"), list)):
+        for node_id, node in workflow.items():
+            if not isinstance(node, dict):
+                continue
+            class_type = node.get("class_type", "")
+            if class_type in _PROMPT_NODE_TYPES:
+                prompt_nodes.append((str(node_id), class_type, ""))
+
+    # UI-format: nodes are in a list under "nodes"
+    if "nodes" in workflow and isinstance(workflow.get("nodes"), list):
+        for node in workflow.get("nodes", []):
+            class_type = node.get("type", "")
+            if class_type in _PROMPT_NODE_TYPES:
+                title = node.get("title", "")
+                prompt_nodes.append((str(node["id"]), class_type, title))
+
+    if not prompt_nodes:
+        return None, None
+
+    # Try to match by title
+    for node_id, class_type, title in prompt_nodes:
+        title_lower = title.lower()
+        if "positive" in title_lower and "negative" not in title_lower:
+            positive_id = node_id
+        elif "negative" in title_lower:
+            negative_id = node_id
+
+    # If we couldn't find both by title, use positional heuristics
+    if positive_id is None and negative_id is None:
+        # No title matches — use positional order:
+        # First CLIPTextEncode = positive, second = negative
+        if len(prompt_nodes) >= 2:
+            positive_id = prompt_nodes[0][0]
+            negative_id = prompt_nodes[1][0]
+        elif len(prompt_nodes) == 1:
+            positive_id = prompt_nodes[0][0]
+    elif positive_id is None:
+        # Found negative by title but not positive — first remaining node is positive
+        for node_id, class_type, title in prompt_nodes:
+            if node_id != negative_id:
+                positive_id = node_id
+                break
+    elif negative_id is None:
+        # Found positive by title but not negative — first remaining node is negative
+        for node_id, class_type, title in prompt_nodes:
+            if node_id != positive_id:
+                negative_id = node_id
+                break
+
+    if positive_id:
+        logger.info("Auto-detected positive prompt node: %s", positive_id)
+    if negative_id:
+        logger.info("Auto-detected negative prompt node: %s", negative_id)
+
+    return positive_id, negative_id
+
+
+def _detect_seed_node(workflow: dict[str, Any]) -> str | None:
+    """Auto-detect the seed node ID from the workflow.
+
+    Scans all nodes for known seed-bearing types (e.g. ``RandomNoise``,
+    ``KSampler``). Returns the first match's node ID, or ``None`` if no
+    seed node is found.
+
+    Args:
+        workflow: The workflow dict (API or UI format).
+
+    Returns:
+        The node ID string of the detected seed node, or ``None``.
+    """
+    # API-format: nodes are keyed by ID directly
+    for node_id, node in workflow.items():
+        if not isinstance(node, dict):
+            continue
+        class_type = node.get("class_type", "")
+        if class_type in _SEED_NODE_TYPES:
+            logger.info(
+                "Auto-detected seed node: %s (class_type=%s)", node_id, class_type,
+            )
+            return str(node_id)
+
+    # UI-format: nodes are in a list under "nodes"
+    if "nodes" in workflow:
+        for node in workflow.get("nodes", []):
+            class_type = node.get("type", "")
+            if class_type in _SEED_NODE_TYPES:
+                logger.info(
+                    "Auto-detected seed node: %s (type=%s)", node["id"], class_type,
+                )
+                return str(node["id"])
+
+    return None
+
+
+def _detect_seed_input_name(workflow: dict[str, Any], node_id: str) -> str | None:
+    """Auto-detect the seed input name for a node based on its class_type.
+
+    Different ComfyUI node types use different widget names for the seed:
+      - ``RandomNoise`` → ``noise_seed``
+      - ``KSampler`` (and variants) → ``seed``
+
+    If the node's class_type is known, returns the first widget name
+    containing "seed". Returns ``None`` if the node has no seed widget.
+
+    Args:
+        workflow: The workflow dict (API or UI format).
+        node_id: The target node ID string.
+
+    Returns:
+        The detected seed input name (e.g. ``"noise_seed"`` or ``"seed"``),
+        or ``None`` if the node type has no seed widget.
+    """
+    # API-format: node is keyed by ID directly
+    if node_id in workflow:
+        node = workflow[node_id]
+        class_type = node.get("class_type", "")
+        if class_type in _WIDGET_NAMES:
+            for name in _WIDGET_NAMES[class_type]:
+                if "seed" in name:
+                    logger.info(
+                        "Auto-detected seed input name '%s' for node %s (class_type=%s)",
+                        name, node_id, class_type,
+                    )
+                    return name
+
+    # UI-format: nodes are in a list under "nodes"
+    if "nodes" in workflow:
+        for node in workflow.get("nodes", []):
+            if str(node.get("id")) == node_id:
+                class_type = node.get("type", "")
+                if class_type in _WIDGET_NAMES:
+                    for name in _WIDGET_NAMES[class_type]:
+                        if "seed" in name:
+                            logger.info(
+                                "Auto-detected seed input name '%s' for node %s (type=%s)",
+                                name, node_id, class_type,
+                            )
+                            return name
+                break
+
+    return None
+
+
 def patch_workflow(
     workflow_json: dict[str, Any],
     positive_prompt: str,
@@ -208,24 +412,122 @@ def patch_workflow(
     """
     patched = copy.deepcopy(workflow_json)
 
+    # --- Auto-detect prompt nodes if not provided or if provided IDs are invalid ---
+    user_pos_id = node_mapping.get("positive_node_id")
+    user_neg_id = node_mapping.get("negative_node_id")
+
+    # Validate user-provided node IDs: they must be CLIPTextEncode (or similar)
+    # nodes that accept a "text" input. If they point to non-text nodes
+    # (e.g. SamplerCustomAdvanced), reject them.
+    pos_invalid = False
+    neg_invalid = False
+
+    if user_pos_id:
+        pos_class = _get_node_class_type(patched, str(user_pos_id))
+        if pos_class and pos_class not in _PROMPT_NODE_TYPES:
+            logger.warning(
+                "User-provided positive_node_id '%s' is a %s node (not a text prompt node); "
+                "auto-detecting prompt nodes from workflow",
+                user_pos_id, pos_class,
+            )
+            pos_invalid = True
+
+    if user_neg_id:
+        neg_class = _get_node_class_type(patched, str(user_neg_id))
+        if neg_class and neg_class not in _PROMPT_NODE_TYPES:
+            logger.warning(
+                "User-provided negative_node_id '%s' is a %s node (not a text prompt node); "
+                "auto-detecting prompt nodes from workflow",
+                user_neg_id, neg_class,
+            )
+            neg_invalid = True
+
+    # Auto-detect prompt nodes from workflow titles/positions.
+    auto_pos, auto_neg = _detect_prompt_nodes(patched)
+
+    # Check for swapped nodes: if the user's positive node matches the
+    # auto-detected negative node (or vice versa), the nodes are swapped
+    # and we should auto-detect instead to avoid injecting prompts into
+    # the wrong nodes.
+    swapped = False
+    if user_pos_id and user_neg_id and auto_pos and auto_neg:
+        if str(user_pos_id) == str(auto_neg) or str(user_neg_id) == str(auto_pos):
+            logger.warning(
+                "User-provided prompt nodes appear to be swapped "
+                "(positive_node_id=%s matches auto-detected negative=%s, or "
+                "negative_node_id=%s matches auto-detected positive=%s); "
+                "auto-detecting prompt nodes from workflow",
+                user_pos_id, auto_neg, user_neg_id, auto_pos,
+            )
+            swapped = True
+
+    # If any validation failed, auto-detect both nodes to avoid conflicts
+    # (e.g. user's valid positive node might be the auto-detected negative).
+    if pos_invalid or neg_invalid or swapped:
+        user_pos_id = auto_pos
+        user_neg_id = auto_neg
+        if user_pos_id:
+            logger.info("Using auto-detected positive prompt node: %s", user_pos_id)
+        if user_neg_id:
+            logger.info("Using auto-detected negative prompt node: %s", user_neg_id)
+    elif not user_pos_id or not user_neg_id:
+        # Fill in missing node IDs from auto-detection
+        if not user_pos_id and auto_pos:
+            logger.info("Using auto-detected positive prompt node: %s", auto_pos)
+            user_pos_id = auto_pos
+        if not user_neg_id and auto_neg:
+            logger.info("Using auto-detected negative prompt node: %s", auto_neg)
+            user_neg_id = auto_neg
+
     # --- Positive prompt node ---
-    pos_node_id = node_mapping.get("positive_node_id")
-    if pos_node_id:
+    if user_pos_id:
         pos_input = node_mapping.get("positive_input_name", "text")
-        _inject_text(patched, pos_node_id, pos_input, positive_prompt)
+        _inject_text(patched, user_pos_id, pos_input, positive_prompt)
 
     # --- Negative prompt node ---
-    neg_node_id = node_mapping.get("negative_node_id")
-    if neg_node_id:
+    if user_neg_id:
         neg_input = node_mapping.get("negative_input_name", "text")
-        _inject_text(patched, neg_node_id, neg_input, negative_prompt)
+        _inject_text(patched, user_neg_id, neg_input, negative_prompt)
 
     # --- Seed node ---
+    # Auto-detect the seed node and seed input name from the workflow.
+    # If the user-provided seed_node_id points to a node that has a seed
+    # widget, use it. Otherwise, scan the workflow for a known seed node
+    # type (RandomNoise, KSampler, etc.) and use that instead.
     seed_node_id = node_mapping.get("seed_node_id")
+    seed_input = None
+
     if seed_node_id:
-        seed_input = node_mapping.get("seed_input_name", "seed")
+        seed_input = _detect_seed_input_name(patched, str(seed_node_id))
+        if seed_input is None:
+            logger.warning(
+                "User-provided seed_node_id '%s' does not have a seed widget; "
+                "auto-detecting seed node from workflow",
+                seed_node_id,
+            )
+            seed_node_id = None
+
+    if seed_node_id is None:
+        auto_id = _detect_seed_node(patched)
+        if auto_id is not None:
+            seed_node_id = auto_id
+            seed_input = _detect_seed_input_name(patched, str(seed_node_id))
+
+    if seed_node_id and seed_input:
         seed_value = seed if seed is not None else random.randint(0, 2**32 - 1)
         _inject_value(patched, seed_node_id, seed_input, seed_value)
+        # Also set control_after_generate to "randomize" so ComfyUI doesn't
+        # reuse or increment the seed across runs
+        _inject_value(patched, seed_node_id, "control_after_generate", "randomize")
+        logger.info(
+            "Injected seed %d into node %s.%s with control_after_generate=randomize",
+            seed_value, seed_node_id, seed_input,
+        )
+    elif seed_node_id:
+        logger.warning(
+            "Could not determine seed input name for node %s; skipping seed injection",
+            seed_node_id,
+        )
 
     return patched
 

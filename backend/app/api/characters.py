@@ -7,7 +7,7 @@ reference images and eventually a trained LoRA for consistent generation.
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -19,6 +19,15 @@ from app.core.caption_generator import (
 )
 from app.core.dataset_validator import DatasetValidationResult, validate_dataset
 from app.core.storage import delete_character_files, get_character_dir
+from app.core.audit import (
+    log_audit_event,
+    extract_client_ip,
+    extract_user_agent,
+    CHARACTER_CREATE,
+    CHARACTER_DELETE,
+    CHARACTER_UPDATE,
+    RESOURCE_CHARACTER,
+)
 from app.db.database import CharacterProfileRow, ReferenceImageRow, get_session
 from app.models.character import (
     CharacterProfile,
@@ -314,6 +323,7 @@ async def update_character(
 )
 async def delete_character(
     character_id: str,
+    fastapi_request: Request,
     session: AsyncSession = Depends(get_session),
 ) -> None:
     """Delete a character profile and its files."""
@@ -329,6 +339,20 @@ async def delete_character(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Character profile '{character_id}' not found",
         )
+
+    # Audit log: character delete
+    await log_audit_event(
+        session=session,
+        action=CHARACTER_DELETE,
+        resource_type=RESOURCE_CHARACTER,
+        resource_id=character_id,
+        details={
+            "character_name": row.character_name,
+            "project_name": row.project_name,
+        },
+        client_ip=extract_client_ip(fastapi_request),
+        user_agent=extract_user_agent(fastapi_request),
+    )
 
     # Delete character from DB first, then files after commit succeeds
     await session.delete(row)

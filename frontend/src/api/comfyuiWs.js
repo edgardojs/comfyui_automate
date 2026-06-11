@@ -1,7 +1,8 @@
 /**
  * ComfyUI WebSocket integration for real-time generation progress tracking.
  *
- * Connects to ComfyUI's WebSocket endpoint to receive execution events:
+ * Connects to ComfyUI's WebSocket endpoint via the backend proxy to receive
+ * execution events:
  * - execution_start: Generation has started
  * - execution_cached: Using cached outputs (progress info)
  * - progress: Step progress (current/total steps)
@@ -9,8 +10,12 @@
  * - execution_error: An error occurred
  * - execution_interrupted: Generation was interrupted
  *
+ * The WebSocket connection is proxied through the backend at /api/comfyui/ws
+ * so that the browser doesn't need direct access to ComfyUI (which is
+ * especially important in Docker deployments where ComfyUI runs on the host).
+ *
  * Usage:
- *   const ws = new ComfyUIWebSocket('ws://127.0.0.1:8188', clientId)
+ *   const ws = new ComfyUIWebSocket(clientId, serverUrl)
  *   ws.onStatusChange = (status) => { ... }
  *   ws.onProgress = (step, maxStep) => { ... }
  *   ws.onComplete = (promptId) => { ... }
@@ -25,12 +30,12 @@ const API_BASE = "/api";
 
 export class ComfyUIWebSocket {
   /**
-   * @param {string} serverUrl - HTTP URL of the ComfyUI server (e.g. http://127.0.0.1:8188)
    * @param {string} clientId - Unique client ID for the WebSocket connection
+   * @param {string} [serverUrl] - ComfyUI server URL (optional, passed to proxy)
    */
-  constructor(serverUrl, clientId) {
-    this.serverUrl = serverUrl;
+  constructor(clientId, serverUrl) {
     this.clientId = clientId;
+    this.serverUrl = serverUrl;
     this.ws = null;
     this.reconnectAttempts = 0;
     this.maxReconnectAttempts = 3;
@@ -46,17 +51,7 @@ export class ComfyUIWebSocket {
   }
 
   /**
-   * Convert an HTTP URL to a WebSocket URL.
-   */
-  _httpToWs(url) {
-    return url
-      .replace(/^http:/, "ws:")
-      .replace(/^https:/, "wss:")
-      .replace(/\/+$/, "");
-  }
-
-  /**
-   * Connect to the ComfyUI WebSocket.
+   * Connect to ComfyUI via the backend WebSocket proxy.
    * @returns {Promise<void>} Resolves when connected, rejects on failure.
    */
   connect() {
@@ -66,7 +61,14 @@ export class ComfyUIWebSocket {
         return;
       }
 
-      const wsUrl = `${this._httpToWs(this.serverUrl)}/ws?clientId=${this.clientId}`;
+      // Build the proxy WebSocket URL — the backend forwards to ComfyUI
+      const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const host = window.location.host;
+      const params = new URLSearchParams({ clientId: this.clientId });
+      if (this.serverUrl) {
+        params.set("server_url", this.serverUrl);
+      }
+      const wsUrl = `${proto}//${host}${API_BASE}/comfyui/ws?${params.toString()}`;
       this._notifyStatus("connecting");
 
       try {

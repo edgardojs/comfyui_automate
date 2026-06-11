@@ -26,7 +26,14 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.lora_state import InvalidStateTransition, transition_job_status
 from app.core.storage import SPRITE_PROJECTS_DIR, get_dataset_dir, get_lora_dir, get_character_dir, get_references_dir
+from app.core.training_quotas import (
+    quota_manager,
+    validate_command_safety,
+    validate_custom_args,
+    TRAINING_TIMEOUT_SECONDS,
+)
 from app.db.database import CharacterProfileRow, LoraJobRow, ReferenceImageRow
 from app.models.lora import LoRAJob, LoRAJobStatus, LoRATrainingConfig
 
@@ -309,19 +316,10 @@ def generate_training_command(
     # Merge default args from backend config
     default_args = backend.get("default_args", {})
     if config.custom_args:
-        # Sanitize custom_args keys: allow only alphanumeric, hyphens, underscores
-        _safe_key_pattern = re.compile(r"^[a-zA-Z0-9_-]+$")
-        for key, value in config.custom_args.items():
-            if not _safe_key_pattern.match(key):
-                raise ValueError(
-                    f"custom_args key '{key}' contains invalid characters. "
-                    "Only alphanumeric characters, hyphens, and underscores are allowed."
-                )
-            if not isinstance(value, (str, int, float, bool)):
-                raise ValueError(
-                    f"custom_args['{key}'] has unsupported type {type(value).__name__}. "
-                    "Only str, int, float, and bool values are allowed."
-                )
+        # Validate custom_args using the quota/safety module
+        is_valid, reason = validate_custom_args(config.custom_args)
+        if not is_valid:
+            raise ValueError(reason)
         default_args = {**default_args, **config.custom_args}
 
     # Add custom args as CLI flags — build argument list directly
@@ -337,7 +335,14 @@ def generate_training_command(
     # Format the command template with config values
     command_str = template.format(**format_vars)
 
-    return shlex.split(command_str) + extra_args
+    command = shlex.split(command_str) + extra_args
+
+    # Validate command safety — ensure it starts with an allowed prefix
+    is_safe, reason = validate_command_safety(command)
+    if not is_safe:
+        raise ValueError(f"Unsafe training command: {reason}")
+
+    return command
 
 
 # ---------------------------------------------------------------------------
@@ -377,6 +382,11 @@ async def start_training(
     if job_id in _active_processes:
         raise RuntimeError(f"Training process already running for job '{job_id}'")
 
+    # Check training job quotas
+    allowed, reason = quota_manager.can_start_job(job_id)
+    if not allowed:
+        raise RuntimeError(reason)
+
     # Ensure output directory exists
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -402,6 +412,8 @@ async def start_training(
         )
 
         _active_processes[job_id] = process
+        # Register the job with the quota manager
+        quota_manager.register_job(job_id)
         logger.info("Training process started for job %s (PID: %d)", job_id, process.pid)
 
         # Close the file descriptor in the parent process — the child
@@ -415,6 +427,8 @@ async def start_training(
             log_file.close()
         _active_processes.pop(job_id, None)
         _active_log_files.pop(job_id, None)
+        # Unregister from quota manager on failure
+        quota_manager.unregister_job(job_id)
         raise
 
 
@@ -437,14 +451,33 @@ async def wait_for_training(job_id: str, session: AsyncSession) -> None:
         return
 
     try:
-        returncode = await process.wait()
-        logger.info("Training process for job %s exited with code %d", job_id, returncode)
+        # Wait for process with timeout (default: 24 hours)
+        try:
+            returncode = await asyncio.wait_for(
+                process.wait(),
+                timeout=TRAINING_TIMEOUT_SECONDS,
+            )
+            logger.info("Training process for job %s exited with code %d", job_id, returncode)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Training job %s exceeded timeout of %d seconds, killing process",
+                job_id,
+                TRAINING_TIMEOUT_SECONDS,
+            )
+            try:
+                process.kill()
+                await process.wait()
+            except ProcessLookupError:
+                pass
+            returncode = -1
     except Exception as exc:
         logger.error("Error waiting for training process %s: %s", job_id, exc)
         returncode = -1
     finally:
         # Clean up process tracking
         _active_processes.pop(job_id, None)
+        # Unregister from quota manager
+        quota_manager.unregister_job(job_id)
         # Keep log path in _active_log_files so read_training_log() can
         # still access logs for completed jobs
         log_path = _active_log_files.get(job_id)
@@ -458,7 +491,7 @@ async def wait_for_training(job_id: str, session: AsyncSession) -> None:
                 except Exception:
                     pass
 
-    # Update job status in database
+    # Update job status in database using atomic state transitions
     result = await session.execute(
         select(LoraJobRow).where(LoraJobRow.job_id == job_id)
     )
@@ -475,8 +508,9 @@ async def wait_for_training(job_id: str, session: AsyncSession) -> None:
         except Exception:
             pass
 
+    # Determine the output LoRA path for completed jobs
+    output_lora_path: str | None = None
     if returncode == 0:
-        row.status = "completed"  # type: ignore[assignment]
         # Find the output LoRA file
         lora_dir = Path(row.output_lora_path) if row.output_lora_path else None
         if lora_dir is None:
@@ -494,15 +528,23 @@ async def wait_for_training(job_id: str, session: AsyncSession) -> None:
                     matches = list(output_dir.glob(ext))
                     if matches:
                         # Select the most recently modified file instead of last alphabetically
-                        row.output_lora_path = str(max(matches, key=lambda f: f.stat().st_mtime))  # type: ignore[assignment]
+                        output_lora_path = str(max(matches, key=lambda f: f.stat().st_mtime))
                         break
-    else:
-        row.status = "failed"  # type: ignore[assignment]
 
-    row.log_output = log_content  # type: ignore[assignment]
-    row.updated_at = datetime.now(timezone.utc)
-    await session.commit()
-    logger.info("Job %s status updated to '%s'", job_id, row.status)
+    # Use atomic state transition to update status
+    target_status = LoRAJobStatus.COMPLETED if returncode == 0 else LoRAJobStatus.FAILED
+    try:
+        row = await transition_job_status(
+            session, job_id, target_status,
+            log_output=log_content,
+            output_lora_path=output_lora_path,
+        )
+        logger.info("Job %s status updated to '%s'", job_id, row.status)
+    except (InvalidStateTransition, ValueError) as exc:
+        logger.error(
+            "Job %s: failed to update status to '%s': %s",
+            job_id, target_status.value, exc,
+        )
 
 
 def get_training_status(job_id: str) -> dict[str, Any]:
@@ -567,6 +609,8 @@ async def cancel_training(job_id: str) -> bool:
         pass
     finally:
         _active_processes.pop(job_id, None)
+        # Unregister from quota manager
+        quota_manager.unregister_job(job_id)
         # Keep log path so read_training_log() can still access logs for cancelled jobs
 
     return True

@@ -7,7 +7,7 @@
  * When a LoRA trigger token is active, it is visually highlighted in
  * the positive prompt display.
  */
-function PromptResults({ results, error, isGenerating, onCopy, onSendToComfyUI, comfyUISubmitting, comfyUIResult, comfyUIProgress, loraTriggerToken }) {
+function PromptResults({ results, error, isGenerating, onCopy, onSendToComfyUI, comfyUISubmitting, comfyUIResult, comfyUIProgress, comfyUIImages, loraTriggerToken }) {
   // Loading state
   if (isGenerating && !results) {
     return (
@@ -260,6 +260,42 @@ function PromptResults({ results, error, isGenerating, onCopy, onSendToComfyUI, 
                   {comfyUIProgress.errorMessage || 'Unknown error'}
                 </div>
               )}
+              {comfyUIProgress.status === 'disconnected' && (
+                <div className="text-yellow-400">
+                  <span className="font-medium">⚠️ WebSocket disconnected.</span>{' '}
+                  Check ComfyUI status. Images will appear below if generation completed.
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Persistent ComfyUI images — shown when progress is not actively generating for this variation */}
+          {/* Active states that show their own UI: connecting, connected, generating, polling, fetching, done */}
+          {/* Show persistent images when: no progress for this variation, OR progress is in error/disconnected state */}
+          {(!(comfyUIProgress && comfyUIResult && comfyUIResult.index === index) || (comfyUIProgress && comfyUIResult && comfyUIResult.index === index && (comfyUIProgress.status === 'error' || comfyUIProgress.status === 'disconnected'))) && comfyUIImages?.[item.history_id]?.length > 0 && (
+            <div className="mt-2 rounded-md border border-emerald-800/50 bg-gray-800/30 p-2.5">
+              <div className="flex items-center gap-2 text-emerald-400 mb-2 text-xs">
+                <span>🖼️</span>
+                <span className="font-medium">Generated Image{comfyUIImages[item.history_id].length > 1 ? 's' : ''}</span>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                {comfyUIImages[item.history_id].map((img, imgIdx) => (
+                  <a
+                    key={imgIdx}
+                    href={img.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block overflow-hidden rounded-md border border-gray-600 hover:border-indigo-500 transition-colors"
+                  >
+                    <img
+                      src={img.url}
+                      alt={`Generated image ${imgIdx + 1}`}
+                      className="w-full h-auto"
+                      loading="lazy"
+                    />
+                  </a>
+                ))}
+              </div>
             </div>
           )}
         </div>

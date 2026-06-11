@@ -4,6 +4,9 @@ import {
   fetchPreviewImages,
   exportLoRA,
   fetchWorkflowTemplate,
+  getLoRADownloadUrl,
+  fetchLoRAVersions,
+  deleteLoRAJob,
 } from '../api/client'
 
 /**
@@ -13,15 +16,18 @@ import {
  * - jobId: the completed LoRA job ID
  * - characterId: the character profile ID
  * - showToast: callback to show a toast notification
+ * - onDelete: optional callback invoked after successful deletion (receives jobId)
  *
  * Features:
  * - LoRA metadata display (trigger token, recommended strength, etc.)
  * - Preview images grid
  * - "Export to ComfyUI" button
  * - "Generate ComfyUI Workflow" button
+ * - "Download LoRA" button
  * - Version history list
+ * - "Delete LoRA" action with confirmation
  */
-function LoraDetail({ jobId, characterId, showToast }) {
+function LoraDetail({ jobId, characterId, showToast, onDelete }) {
   // Metadata
   const [metadata, setMetadata] = useState(null)
   const [metadataLoading, setMetadataLoading] = useState(true)
@@ -37,6 +43,14 @@ function LoraDetail({ jobId, characterId, showToast }) {
   // Workflow
   const [workflow, setWorkflow] = useState(null)
   const [workflowLoading, setWorkflowLoading] = useState(false)
+
+  // Version history
+  const [versions, setVersions] = useState([])
+  const [versionsLoading, setVersionsLoading] = useState(false)
+
+  // Delete
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
   // Load metadata
   const loadMetadata = useCallback(async () => {
@@ -61,6 +75,20 @@ function LoraDetail({ jobId, characterId, showToast }) {
       // Previews may not exist yet
     } finally {
       setPreviewsLoading(false)
+    }
+  }, [jobId])
+
+  // Load version history
+  const loadVersions = useCallback(async () => {
+    setVersionsLoading(true)
+    try {
+      const data = await fetchLoRAVersions(jobId)
+      setVersions(data.versions || [])
+    } catch {
+      // Versions may not exist for all jobs
+      setVersions([])
+    } finally {
+      setVersionsLoading(false)
     }
   }, [jobId])
 
@@ -130,6 +158,21 @@ function LoraDetail({ jobId, characterId, showToast }) {
         }
       })
   }, [workflow, showToast])
+
+  // Delete LoRA job
+  const handleDelete = useCallback(async () => {
+    setDeleting(true)
+    try {
+      const result = await deleteLoRAJob(jobId)
+      showToast(`🗑️ LoRA job deleted (${result.deleted_files?.length || 0} files removed)`)
+      if (onDelete) onDelete(jobId)
+    } catch (err) {
+      showToast(`❌ Failed to delete: ${err.message}`)
+    } finally {
+      setDeleting(false)
+      setShowDeleteConfirm(false)
+    }
+  }, [jobId, showToast, onDelete])
 
   // Memoize the stringified workflow to avoid recomputing on every render
   const workflowJsonStr = useMemo(() => {
@@ -212,6 +255,53 @@ function LoraDetail({ jobId, characterId, showToast }) {
         )}
       </div>
 
+      {/* Download LoRA */}
+      <div className="bg-gray-800 border border-gray-700 rounded-lg p-3">
+        <h5 className="text-xs font-semibold text-white mb-2">Download LoRA</h5>
+        <a
+          href={getLoRADownloadUrl(jobId)}
+          download
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded transition-colors bg-emerald-700 hover:bg-emerald-600 text-emerald-100 cursor-pointer"
+        >
+          ⬇️ Download .safetensors
+        </a>
+        <p className="text-[10px] text-gray-500 mt-1">
+          Downloads the trained LoRA file to your computer
+        </p>
+      </div>
+
+      {/* Version History */}
+      <div className="bg-gray-800 border border-gray-700 rounded-lg p-3">
+        <div className="flex items-center justify-between mb-2">
+          <h5 className="text-xs font-semibold text-white">Version History</h5>
+          <button
+            onClick={loadVersions}
+            disabled={versionsLoading}
+            className="text-[10px] text-emerald-400 hover:text-emerald-300 transition-colors cursor-pointer disabled:opacity-50"
+          >
+            {versionsLoading ? 'Loading...' : 'Refresh'}
+          </button>
+        </div>
+        {versionsLoading && versions.length === 0 ? (
+          <div className="animate-pulse h-8 bg-gray-700 rounded" />
+        ) : versions.length > 0 ? (
+          <ul className="space-y-1">
+            {versions.map(v => (
+              <li key={v.filename} className="flex items-center justify-between text-xs bg-gray-900 rounded px-2 py-1">
+                <span className="text-gray-300 font-mono truncate mr-2">{v.filename}</span>
+                <span className="text-gray-500 shrink-0">
+                  v{v.version} · {(v.size / 1024 / 1024).toFixed(1)} MB
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-xs text-gray-500">
+            {versionsLoading ? 'Loading versions...' : 'No versioned LoRA files found. Train and version a LoRA to see history here.'}
+          </p>
+        )}
+      </div>
+
       {/* Export to ComfyUI */}
       <div className="bg-gray-800 border border-gray-700 rounded-lg p-3">
         <h5 className="text-xs font-semibold text-white mb-2">Export to ComfyUI</h5>
@@ -262,6 +352,40 @@ function LoraDetail({ jobId, characterId, showToast }) {
               {workflowJsonStr.slice(0, 2000)}
               {workflowJsonStr.length > 2000 && '\n... (truncated)'}
             </pre>
+          </div>
+        )}
+      </div>
+
+      {/* Delete LoRA — Danger Zone */}
+      <div className="bg-gray-800 border border-red-900/50 rounded-lg p-3">
+        <h5 className="text-xs font-semibold text-red-400 mb-2">Danger Zone</h5>
+        {!showDeleteConfirm ? (
+          <button
+            onClick={() => setShowDeleteConfirm(true)}
+            className="px-3 py-1.5 text-xs font-medium rounded transition-colors cursor-pointer bg-red-900/50 hover:bg-red-800 text-red-300"
+          >
+            🗑️ Delete LoRA Job
+          </button>
+        ) : (
+          <div className="space-y-2">
+            <p className="text-xs text-red-300">
+              This will permanently delete the LoRA job, its output files, and all associated data. This cannot be undone.
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={handleDelete}
+                disabled={deleting}
+                className="px-3 py-1.5 text-xs font-medium rounded transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed bg-red-700 hover:bg-red-600 text-red-100"
+              >
+                {deleting ? 'Deleting...' : '⚠️ Confirm Delete'}
+              </button>
+              <button
+                onClick={() => setShowDeleteConfirm(false)}
+                className="px-3 py-1.5 text-xs font-medium rounded transition-colors cursor-pointer bg-gray-700 hover:bg-gray-600 text-gray-300"
+              >
+                Cancel
+              </button>
+            </div>
           </div>
         )}
       </div>

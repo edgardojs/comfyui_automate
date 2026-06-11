@@ -220,6 +220,313 @@ class TestPatchWorkflowAPIFormat:
             )
 
 
+class TestSeedAutoDetection:
+    """Test auto-detection of seed input name based on node class_type."""
+
+    def test_detects_noise_seed_for_random_noise_api(self):
+        """RandomNoise node in API format should auto-detect 'noise_seed'."""
+        workflow = {
+            "6": {"class_type": "CLIPTextEncode", "inputs": {"text": "prompt", "clip": ["4", 1]}},
+            "25": {"class_type": "RandomNoise", "inputs": {"noise_seed": 12345, "control_after_generate": "increment"}},
+        }
+        result = patch_workflow(
+            workflow,
+            positive_prompt="test",
+            negative_prompt="test",
+            node_mapping={
+                "positive_node_id": "6",
+                "seed_node_id": "25",
+                # No seed_input_name — should auto-detect "noise_seed"
+            },
+            seed=99999,
+        )
+        assert result["25"]["inputs"]["noise_seed"] == 99999
+
+    def test_detects_seed_for_ksampler_api(self):
+        """KSampler node in API format should auto-detect 'seed'."""
+        result = patch_workflow(
+            SAMPLE_API_WORKFLOW,
+            positive_prompt="test",
+            negative_prompt="test",
+            node_mapping={
+                "positive_node_id": "6",
+                "negative_node_id": "7",
+                "seed_node_id": "3",
+                # No seed_input_name — should auto-detect "seed" for KSampler
+            },
+            seed=42,
+        )
+        assert result["3"]["inputs"]["seed"] == 42
+
+    def test_explicit_seed_input_name_is_overridden_by_auto_detect(self):
+        """Auto-detection always takes priority to ensure correct widget name.
+        Even if the user provides an incorrect seed_input_name (e.g. 'seed'
+        for a RandomNoise node), auto-detection will use 'noise_seed'."""
+        workflow = {
+            "6": {"class_type": "CLIPTextEncode", "inputs": {"text": "prompt"}},
+            "25": {"class_type": "RandomNoise", "inputs": {"noise_seed": 12345}},
+        }
+        result = patch_workflow(
+            workflow,
+            positive_prompt="test",
+            negative_prompt="test",
+            node_mapping={
+                "positive_node_id": "6",
+                "seed_node_id": "25",
+                "seed_input_name": "seed",  # Wrong name — auto-detect will use "noise_seed"
+            },
+            seed=99999,
+        )
+        # Auto-detection should use "noise_seed" for RandomNoise, not "seed"
+        assert result["25"]["inputs"]["noise_seed"] == 99999
+
+    def test_detects_noise_seed_for_random_noise_ui(self):
+        """RandomNoise node in UI format should auto-detect 'noise_seed'."""
+        workflow = {
+            "nodes": [
+                {"id": 6, "type": "CLIPTextEncode", "inputs": [{"name": "text", "type": "STRING", "value": "prompt"}]},
+                {"id": 25, "type": "RandomNoise", "inputs": [], "widgets_values": [12345, "increment"]},
+            ],
+            "links": [],
+        }
+        result = patch_workflow(
+            workflow,
+            positive_prompt="test",
+            negative_prompt="test",
+            node_mapping={
+                "positive_node_id": "6",
+                "seed_node_id": "25",
+            },
+            seed=99999,
+        )
+        node25 = next(n for n in result["nodes"] if n["id"] == 25)
+        # UI format stores inputs as a dict after patching
+        inputs = node25["inputs"]
+        if isinstance(inputs, list):
+            # Find the noise_seed input in the list
+            seed_input = next((inp for inp in inputs if inp.get("name") == "noise_seed"), None)
+            assert seed_input is not None
+            assert seed_input["value"] == 99999
+        else:
+            assert inputs["noise_seed"] == 99999
+
+    def test_falls_back_to_auto_detect_when_user_node_has_no_seed(self):
+        """When user-provided seed_node_id points to a non-seed node,
+        auto-detect should find the actual seed node in the workflow."""
+        workflow = {
+            "6": {"class_type": "CLIPTextEncode", "inputs": {"text": "prompt"}},
+            "17": {"class_type": "BasicScheduler", "inputs": {}},
+            "25": {"class_type": "RandomNoise", "inputs": {"noise_seed": 0, "control_after_generate": "increment"}},
+        }
+        result = patch_workflow(
+            workflow,
+            positive_prompt="test",
+            negative_prompt="test",
+            node_mapping={
+                "positive_node_id": "6",
+                "seed_node_id": "17",  # Wrong node — BasicScheduler has no seed
+            },
+            seed=42,
+        )
+        # Should auto-detect node 25 (RandomNoise) and inject there
+        assert result["25"]["inputs"]["noise_seed"] == 42
+        assert result["25"]["inputs"]["control_after_generate"] == "randomize"
+        # Node 17 should NOT have a seed injected
+        assert "seed" not in result["17"]["inputs"]
+        assert "noise_seed" not in result["17"]["inputs"]
+
+    def test_no_seed_injection_when_no_seed_node_found(self):
+        """When no seed node exists in the workflow, seed injection is skipped."""
+        workflow = {
+            "6": {"class_type": "CLIPTextEncode", "inputs": {"text": "prompt"}},
+            "99": {"class_type": "CustomSeedNode", "inputs": {}},
+        }
+        result = patch_workflow(
+            workflow,
+            positive_prompt="test",
+            negative_prompt="test",
+            node_mapping={
+                "positive_node_id": "6",
+                "seed_node_id": "99",
+            },
+            seed=42,
+        )
+        # No seed should be injected anywhere — CustomSeedNode is not a known seed type
+        assert "seed" not in result["99"]["inputs"]
+
+
+class TestPromptNodeAutoDetection:
+    """Test auto-detection and validation of positive/negative prompt nodes."""
+
+    def _make_workflow_with_titled_nodes(self):
+        """Create a workflow with titled CLIPTextEncode nodes (API format)."""
+        return {
+            "6": {
+                "class_type": "CLIPTextEncode",
+                "inputs": {"text": "original positive", "clip": ["44", 0]},
+            },
+            "51": {
+                "class_type": "CLIPTextEncode",
+                "inputs": {"text": "original negative", "clip": ["44", 0]},
+            },
+            "13": {
+                "class_type": "SamplerCustomAdvanced",
+                "inputs": {"noise": ["25", 0], "sampler": ["12", 0]},
+            },
+            "25": {
+                "class_type": "RandomNoise",
+                "inputs": {"noise_seed": 12345, "control_after_generate": "increment"},
+            },
+        }
+
+    def _make_workflow_with_titled_nodes_ui(self):
+        """Create a workflow with titled CLIPTextEncode nodes (UI format)."""
+        return {
+            "nodes": [
+                {"id": 6, "type": "CLIPTextEncode", "title": "CLIP Text Encode (Positive Prompt)", "inputs": [{"name": "text", "type": "STRING"}], "widgets_values": ["original positive"]},
+                {"id": 51, "type": "CLIPTextEncode", "title": "Clip Text Encode (Negative Prompt)", "inputs": [{"name": "text", "type": "STRING"}], "widgets_values": ["original negative"]},
+                {"id": 13, "type": "SamplerCustomAdvanced", "inputs": [], "widgets_values": []},
+                {"id": 25, "type": "RandomNoise", "inputs": [], "widgets_values": [12345, "increment"]},
+            ],
+            "links": [],
+        }
+
+    def test_auto_detects_prompt_nodes_when_empty_mapping(self):
+        """When no node IDs are provided, auto-detect should find prompt nodes."""
+        workflow = self._make_workflow_with_titled_nodes()
+        result = patch_workflow(
+            workflow,
+            positive_prompt="auto positive",
+            negative_prompt="auto negative",
+            node_mapping={},
+        )
+        assert result["6"]["inputs"]["text"] == "auto positive"
+        assert result["51"]["inputs"]["text"] == "auto negative"
+
+    def test_auto_detects_prompt_nodes_ui_format(self):
+        """Auto-detect should work with UI-format workflows."""
+        workflow = self._make_workflow_with_titled_nodes_ui()
+        result = patch_workflow(
+            workflow,
+            positive_prompt="auto positive ui",
+            negative_prompt="auto negative ui",
+            node_mapping={},
+        )
+        node6 = next(n for n in result["nodes"] if n["id"] == 6)
+        node51 = next(n for n in result["nodes"] if n["id"] == 51)
+        text6 = next(inp for inp in node6["inputs"] if inp["name"] == "text")
+        text51 = next(inp for inp in node51["inputs"] if inp["name"] == "text")
+        assert text6["value"] == "auto positive ui"
+        assert text51["value"] == "auto negative ui"
+
+    def test_rejects_non_text_node_for_positive(self):
+        """If positive_node_id points to a non-text node (e.g. SamplerCustomAdvanced),
+        auto-detect should override it."""
+        workflow = self._make_workflow_with_titled_nodes()
+        result = patch_workflow(
+            workflow,
+            positive_prompt="corrected positive",
+            negative_prompt="corrected negative",
+            node_mapping={
+                "positive_node_id": "13",  # SamplerCustomAdvanced — not a text node
+                "negative_node_id": "51",
+            },
+        )
+        # Should auto-detect node 6 as positive instead of using node 13
+        assert result["6"]["inputs"]["text"] == "corrected positive"
+        assert result["51"]["inputs"]["text"] == "corrected negative"
+
+    def test_rejects_non_text_node_for_negative(self):
+        """If negative_node_id points to a non-text node, auto-detect should
+        override both nodes to avoid conflicts."""
+        workflow = self._make_workflow_with_titled_nodes()
+        result = patch_workflow(
+            workflow,
+            positive_prompt="corrected positive",
+            negative_prompt="corrected negative",
+            node_mapping={
+                "positive_node_id": "6",
+                "negative_node_id": "13",  # SamplerCustomAdvanced — not a text node
+            },
+        )
+        # Should auto-detect both nodes since one is invalid
+        assert result["6"]["inputs"]["text"] == "corrected positive"
+        assert result["51"]["inputs"]["text"] == "corrected negative"
+
+    def test_detects_swapped_nodes(self):
+        """If positive_node_id matches the auto-detected negative node (or vice versa),
+        the nodes are swapped and auto-detect should override both."""
+        workflow = self._make_workflow_with_titled_nodes()
+        result = patch_workflow(
+            workflow,
+            positive_prompt="swapped positive",
+            negative_prompt="swapped negative",
+            node_mapping={
+                "positive_node_id": "51",  # Actually the negative node
+                "negative_node_id": "6",    # Actually the positive node
+            },
+        )
+        # Should auto-detect and correct the swap
+        assert result["6"]["inputs"]["text"] == "swapped positive"
+        assert result["51"]["inputs"]["text"] == "swapped negative"
+
+    def test_correct_node_ids_are_preserved(self):
+        """When correct node IDs are provided, they should be used as-is."""
+        workflow = self._make_workflow_with_titled_nodes()
+        result = patch_workflow(
+            workflow,
+            positive_prompt="correct positive",
+            negative_prompt="correct negative",
+            node_mapping={
+                "positive_node_id": "6",
+                "negative_node_id": "51",
+            },
+        )
+        assert result["6"]["inputs"]["text"] == "correct positive"
+        assert result["51"]["inputs"]["text"] == "correct negative"
+
+    def test_detects_prompt_nodes_by_title_in_ui_format(self):
+        """_detect_prompt_nodes should identify nodes by their title containing
+        'Positive' or 'Negative'."""
+        from app.core.workflow_patcher import _detect_prompt_nodes
+        workflow = self._make_workflow_with_titled_nodes_ui()
+        pos, neg = _detect_prompt_nodes(workflow)
+        assert pos == "6"
+        assert neg == "51"
+
+    def test_detects_prompt_nodes_in_api_format_by_position(self):
+        """In API format (no titles), _detect_prompt_nodes should use
+        positional heuristics: first CLIPTextEncode = positive, second = negative."""
+        from app.core.workflow_patcher import _detect_prompt_nodes
+        workflow = self._make_workflow_with_titled_nodes()
+        pos, neg = _detect_prompt_nodes(workflow)
+        # API format has no titles, so positional heuristics apply
+        assert pos == "6"
+        assert neg == "51"
+
+    def test_single_prompt_node_auto_detects_positive_only(self):
+        """With only one CLIPTextEncode node, auto-detect should find it as positive."""
+        from app.core.workflow_patcher import _detect_prompt_nodes
+        workflow = {
+            "6": {"class_type": "CLIPTextEncode", "inputs": {"text": "only prompt"}},
+            "25": {"class_type": "RandomNoise", "inputs": {"noise_seed": 0}},
+        }
+        pos, neg = _detect_prompt_nodes(workflow)
+        assert pos == "6"
+        assert neg is None
+
+    def test_no_prompt_nodes_returns_none(self):
+        """With no CLIPTextEncode nodes, auto-detect should return (None, None)."""
+        from app.core.workflow_patcher import _detect_prompt_nodes
+        workflow = {
+            "13": {"class_type": "SamplerCustomAdvanced", "inputs": {}},
+            "25": {"class_type": "RandomNoise", "inputs": {"noise_seed": 0}},
+        }
+        pos, neg = _detect_prompt_nodes(workflow)
+        assert pos is None
+        assert neg is None
+
+
 class TestPatchWorkflowUIFormat:
     """Test patching UI-format ComfyUI workflows."""
 
